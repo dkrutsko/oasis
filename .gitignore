@@ -1,0 +1,18 @@
+# Generic
+.DS_Store
+
+# Bin
+/bin/
+
+# Logs
+*.log
+/logs/
+
+# IDE
+.vs
+.vscode
+/.idea/
+*.code-workspace
+*.sublime-workspace
+*.sublime-settings
+ideas.txt
