@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/fatih/color v1.18.0
 	github.com/go-stack/stack v1.8.1
+	golang.org/x/sync v0.11.0
 )
 
 require (
