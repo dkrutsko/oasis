@@ -42,12 +42,35 @@ func (log *LogHandler) formatInner(v slog.Value) string {
 
 		var result []string
 		// Loop through the attributes
-		for _, sub := range v.Group() {
+		for _, a := range v.Group() {
+
+			// Check for source and make sure it's a kind of group
+			if a.Key == "src" && a.Value.Kind() == slog.KindGroup {
+
+				// Iterate through attrs in the group
+				for _, sub := range a.Value.Group() {
+
+					// Grab function name
+					if sub.Key == "func" {
+
+						parts := strings.Split(
+							sub.Value.String(),
+							"/",
+						)
+
+						// Prepend parts
+						result = append(
+							[]string{"[" + parts[len(parts)-1] + "]"},
+							result...,
+						)
+					}
+				}
+			}
 
 			// Check for source
-			if sub.Key != "src" {
-				// Format the other attributes recursively with same filtering
-				result = append(result, sub.Key+"="+log.formatInner(sub.Value))
+			if a.Key != "src" {
+				// Format other attributes recursively with same filtering
+				result = append(result, a.Key+"="+log.formatInner(a.Value))
 			}
 		}
 
