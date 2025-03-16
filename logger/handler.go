@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
@@ -35,6 +36,52 @@ type LogHandler struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (log *LogHandler) prependSrc(a slog.Attr, result *[]string) bool {
+
+	// Check for source and make sure it's a kind of group
+	if a.Key == "src" && a.Value.Kind() == slog.KindGroup {
+
+		var fn string = ""
+		var ln int64 = -1
+
+		// Iterate through attrs in the group
+		for _, sub := range a.Value.Group() {
+
+			// Grab function name
+			if sub.Key == "func" {
+
+				parts := strings.Split(
+					sub.Value.String(),
+					"/",
+				)
+
+				fn = parts[len(parts)-1]
+			}
+
+			// Grab function line
+			if sub.Key == "line" {
+				ln = sub.Value.Int64()
+			}
+		}
+
+		// Prepend all the parts
+		if fn != "" && ln >= 0 {
+
+			// Prepend parts
+			*result = append(
+				[]string{fmt.Sprintf("[%s:%d]", fn, ln)},
+				*result...,
+			)
+
+			return true
+		}
+	}
+
+	return false
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (log *LogHandler) formatInner(v slog.Value) string {
 
 	// Try parsing value as a group
@@ -44,31 +91,9 @@ func (log *LogHandler) formatInner(v slog.Value) string {
 		// Loop through the attributes
 		for _, a := range v.Group() {
 
-			// Check for source and make sure it's a kind of group
-			if a.Key == "src" && a.Value.Kind() == slog.KindGroup {
+			// Check if src can be prepended
+			if !log.prependSrc(a, &result) {
 
-				// Iterate through attrs in the group
-				for _, sub := range a.Value.Group() {
-
-					// Grab function name
-					if sub.Key == "func" {
-
-						parts := strings.Split(
-							sub.Value.String(),
-							"/",
-						)
-
-						// Prepend parts
-						result = append(
-							[]string{"[" + parts[len(parts)-1] + "]"},
-							result...,
-						)
-					}
-				}
-			}
-
-			// Check for source
-			if a.Key != "src" {
 				// Format other attributes recursively with same filtering
 				result = append(result, a.Key+"="+log.formatInner(a.Value))
 			}
@@ -96,33 +121,13 @@ func (log *LogHandler) formatMessage(r slog.Record) string {
 	// Handle attrs when writing text
 	r.Attrs(func(a slog.Attr) bool {
 
-		// Check for source and make sure it's a kind of group
-		if a.Key == "src" && a.Value.Kind() == slog.KindGroup {
+		// Check if src can be prepended
+		if !log.prependSrc(a, &result) {
 
-			// Iterate through attrs in the group
-			for _, sub := range a.Value.Group() {
-
-				// Grab function name
-				if sub.Key == "func" {
-
-					parts := strings.Split(
-						sub.Value.String(),
-						"/",
-					)
-
-					// Prepend parts
-					result = append(
-						[]string{"[" + parts[len(parts)-1] + "]"},
-						result...,
-					)
-
-					return true
-				}
-			}
+			// Format the other attributes and filter out extra metadata
+			result = append(result, a.Key+"="+log.formatInner(a.Value))
 		}
 
-		// Format the other attributes and filter out extra metadata
-		result = append(result, a.Key+"="+log.formatInner(a.Value))
 		return true
 	})
 
