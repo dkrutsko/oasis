@@ -2,34 +2,72 @@ package game
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/dkrutsko/oasis/logger"
+	"github.com/dkrutsko/oasis/runtime"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 
 type Options struct {
-	Group *errgroup.Group
-	Gctx  context.Context
+	Group   *errgroup.Group
+	Gctx    context.Context
+	Runtime *runtime.Runtime
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 type Game struct {
 	options *Options
+
+	scannerLock sync.RWMutex
+	scanner     *ScannerState
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 func New(opts *Options) *Game {
 
-	// Create game
-	return &Game{
+	g := &Game{
 		options: opts,
 	}
+
+	// Create empty scanner state
+	g.scanner = NewScannerState()
+	return g
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (g *Game) GetScannerState() *ScannerState {
+
+	// Lock when getting
+	g.scannerLock.RLock()
+	defer g.scannerLock.RUnlock()
+
+	if g.scanner != nil {
+		// Return clone of state
+		return g.scanner.Clone()
+	}
+
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (g *Game) SetScannerState(s *ScannerState) {
+
+	// Lock when setting
+	g.scannerLock.Lock()
+	defer g.scannerLock.Unlock()
+
+	// Set state
+	g.scanner = s
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -38,39 +76,59 @@ func (g *Game) Create() error {
 
 	//----------------------------------------------------------------------------//
 
-	opts := g.options
+	g.options.Group.Go(func() error {
+		logger.Dbg("starting game scanner")
 
-	//----------------------------------------------------------------------------//
-
-	opts.Group.Go(func() error {
-		logger.Dbg("starting scanner")
-
+		logger.Info("looking for the game")
 		for {
 			timer := time.NewTimer(1 * time.Second)
 
 			select {
-			// Wait for cancel call
-			case <-opts.Gctx.Done():
-				logger.Dbg("stopping scanner")
+			// Wait for the cancel call
+			case <-g.options.Gctx.Done():
+				logger.Dbg("stopping game scanner")
 				timer.Stop()
 				return nil
 
 			// Handle timer signal
 			case <-timer.C:
-				// Perform update
-				g.updateScanner()
+				// Get current scanner state
+				prev := g.GetScannerState()
+
+				// Get the new scanner state
+				curr := g.updateScanner(prev)
+
+				// If the state changed
+				if curr.Changed(prev) {
+
+					// If attached or detached from the game
+					if curr.Result == ScannerResultSuccess {
+						logger.Info(
+							"attached",
+							logger.Uint32("pid", curr.PID),
+							logger.String("engine", fmt.Sprintf("%08X", curr.EngineBase)),
+							logger.String("client", fmt.Sprintf("%08X", curr.ClientBase)),
+						)
+
+					} else {
+						logger.Info("detached")
+					}
+
+					// Set new scanner state
+					g.SetScannerState(curr)
+				}
 			}
 		}
 	})
 
 	//----------------------------------------------------------------------------//
 
-	opts.Group.Go(func() error {
+	g.options.Group.Go(func() error {
 		logger.Dbg("starting camera updater")
 
 		for {
-			// Check if stopping the app
-			if opts.Gctx.Err() != nil {
+			// Check whether stopping the app
+			if g.options.Gctx.Err() != nil {
 				logger.Dbg("stopping camera updater")
 				return nil
 			}
@@ -78,8 +136,11 @@ func (g *Game) Create() error {
 			// Get a start time
 			start := time.Now()
 
-			// Perform update
-			g.updateCamera()
+			// Get current scanner state
+			scanner := g.GetScannerState()
+
+			// Perform the update
+			g.updateCamera(scanner)
 
 			// Calculate time for update
 			elapsed := time.Since(start)
@@ -94,12 +155,12 @@ func (g *Game) Create() error {
 
 	//----------------------------------------------------------------------------//
 
-	opts.Group.Go(func() error {
+	g.options.Group.Go(func() error {
 		logger.Dbg("starting content updater")
 
 		for {
-			// Check if stopping the app
-			if opts.Gctx.Err() != nil {
+			// Check whether stopping the app
+			if g.options.Gctx.Err() != nil {
 				logger.Dbg("stopping content updater")
 				return nil
 			}
@@ -107,8 +168,11 @@ func (g *Game) Create() error {
 			// Get a start time
 			start := time.Now()
 
-			// Perform update
-			g.updateContent()
+			// Get current scanner state
+			scanner := g.GetScannerState()
+
+			// Perform the update
+			g.updateContent(scanner)
 
 			// Calculate time for update
 			elapsed := time.Since(start)

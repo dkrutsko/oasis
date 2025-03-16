@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/dkrutsko/oasis/config"
 	"github.com/dkrutsko/oasis/game"
 	"github.com/dkrutsko/oasis/logger"
+	"github.com/dkrutsko/oasis/runtime"
 	"github.com/dkrutsko/oasis/server"
 )
 
@@ -31,23 +33,36 @@ func main() {
 	// Get application config
 	cfg := config.GetConfig()
 
+	//----------------------------------------------------------------------------//
+
+	// Print version
 	if cfg.Version {
-		// Just print version
-		fmt.Printf("%s/%s\n",
-			config.AppName(),
-			config.Version(),
+		printVersion()
+		return
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Setup the app logger
+	setupLogger()
+
+	// Output splash screen
+	logSplash()
+
+	//----------------------------------------------------------------------------//
+
+	r := runtime.New()
+
+	err = r.Create()
+	if err != nil {
+		logger.Err(
+			"failed to create runtime",
+			logger.Error("error", err),
 		)
 		return
 	}
 
-	// Create application logger
-	setupLogger()
-
-	logger.Info(
-		"starting",
-		logger.String("appName", config.AppName()),
-		logger.String("version", config.Version()),
-	)
+	//----------------------------------------------------------------------------//
 
 	// Enable a graceful shutdown
 	ctx, cancel := setupSignals()
@@ -60,14 +75,19 @@ func main() {
 
 	g := game.New(
 		&game.Options{
-			Group: group,
-			Gctx:  gctx,
+			Group:   group,
+			Gctx:    gctx,
+			Runtime: r,
 		},
 	)
 
 	err = g.Create()
 	if err != nil {
-		panic(err)
+		logger.Err(
+			"failed to create game",
+			logger.Error("error", err),
+		)
+		return
 	}
 
 	//----------------------------------------------------------------------------//
@@ -84,7 +104,11 @@ func main() {
 
 	err = s.Create()
 	if err != nil {
-		panic(err)
+		logger.Err(
+			"failed to create server",
+			logger.Error("error", err),
+		)
+		return
 	}
 
 	//----------------------------------------------------------------------------//
@@ -92,7 +116,11 @@ func main() {
 	// Await shutdown
 	err = group.Wait()
 	if err != nil {
-		panic(err)
+		logger.Err(
+			"failed during main loop",
+			logger.Error("error", err),
+		)
+		return
 	}
 
 	//----------------------------------------------------------------------------//
@@ -100,6 +128,23 @@ func main() {
 	logger.Info("shutdown was clean")
 
 	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func printVersion() {
+
+	// Try to retrieve the version
+	version := config.GetVersion()
+
+	// Encode version into the resulting JSON
+	result, err := json.MarshalIndent(version, "", "\t")
+	if err != nil {
+		panic(err)
+	}
+
+	// Output result to console
+	fmt.Println(string(result))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -121,6 +166,48 @@ func setupLogger() {
 		// Setup logger for the app
 		logger.New(level, cfg.Json),
 	)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func logSplash() {
+
+	// Try to retrieve the version
+	version := config.GetVersion()
+
+	// Get application config
+	cfg := config.GetConfig()
+
+	if cfg.Debug {
+
+		logger.Info(
+			"launching oasis",
+			logger.Time("date", version.Date),
+			logger.Uint16("build", version.Build),
+			logger.Uint16("rev", version.Rev),
+			logger.Group("runtime",
+				logger.String("version", version.Runtime.Version),
+				logger.String("os", version.Runtime.OS),
+				logger.String("arch", version.Runtime.Arch),
+			),
+			logger.Group("git",
+				logger.String("long", version.Git.Long),
+				logger.String("short", version.Git.Short),
+				logger.Time("date", version.Git.Date),
+				logger.String("branch", version.Git.Branch),
+				logger.Bool("dirty", version.Git.Dirty),
+			),
+		)
+
+	} else {
+
+		logger.Info(
+			"launching oasis",
+			logger.Time("date", version.Date),
+			logger.Uint16("build", version.Build),
+			logger.Uint16("rev", version.Rev),
+		)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////

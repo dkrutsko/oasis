@@ -5,6 +5,14 @@
 OUTPUT = ./bin/
 BINARY = oasis
 
+LDFLAGS = -X 'github.com/dkrutsko/oasis/config.buildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)' \
+          -X 'github.com/dkrutsko/oasis/utility.gitEmbedCommit=$(shell git --no-pager rev-parse --verify HEAD | base64)' \
+          -X 'github.com/dkrutsko/oasis/utility.gitEmbedDate=$(shell git --no-pager show -s --format=%aI | base64)' \
+          -X 'github.com/dkrutsko/oasis/utility.gitEmbedMessage=$(shell git --no-pager log -1 --pretty=%B | base64)' \
+          -X 'github.com/dkrutsko/oasis/utility.gitEmbedRemote=$(shell git --no-pager ls-remote --get-url | base64)' \
+          -X 'github.com/dkrutsko/oasis/utility.gitEmbedBranch=$(shell git --no-pager branch --show-current | base64)' \
+          -X 'github.com/dkrutsko/oasis/utility.gitEmbedStatus=$(shell git --no-pager status --porcelain | base64)'
+
 
 
 ##----------------------------------------------------------------------------##
@@ -39,13 +47,13 @@ help:
 .PHONY: build debug test clean
 
 build:
-	go build -ldflags "-s -w" -o "$(OUTPUT)$(BINARY)"
+	go build -ldflags "$(LDFLAGS) -s -w" -o "$(OUTPUT)$(BINARY)"
 
 debug:
 	# Include -gcflags to improve the experience with GDB
 	# particularly when needing to print variable values.
 	# Also try to detect race conditions using -race flag.
-	go build -o "$(OUTPUT)$(BINARY)" -gcflags="all=-N -l" -race
+	go build -ldflags "$(LDFLAGS)" -o "$(OUTPUT)$(BINARY)" -gcflags="all=-N -l" -race
 
 test:
 	# Do test without caching
@@ -63,4 +71,4 @@ clean:
 .PHONY: publish
 
 publish: clean
-	env GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o "$(OUTPUT)$(BINARY).exe"
+	env GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS) -s -w" -o "$(OUTPUT)$(BINARY).exe"

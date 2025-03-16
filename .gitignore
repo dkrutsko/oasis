@@ -3,6 +3,7 @@
 
 # Bin
 /bin/
+/static/
 
 # Logs
 *.log

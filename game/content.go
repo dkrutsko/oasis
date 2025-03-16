@@ -2,6 +2,6 @@ package game
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (g *Game) updateContent() {
+func (g *Game) updateContent(scanner *ScannerState) {
 
 }
