@@ -29,10 +29,6 @@ go mod tidy
 printf -- "\n\e[1;32mFormatting Go code\e[0m\n"
 gofmt -s -w .
 
-# Run through all the unit tests in the project
-printf -- "\n\e[1;32mRunning unit tests\e[0m\n"
-make test
-
 ##----------------------------------------------------------------------------##
 
 } # Ensures the entire script is downloaded

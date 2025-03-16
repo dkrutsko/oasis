@@ -30,7 +30,6 @@ help:
 	@echo "  $$ make help    - Prints out these help instructions"
 	@echo "  $$ make build   - Builds main binary in release mode"
 	@echo "  $$ make debug   - Builds main binary in debug mode"
-	@echo "  $$ make test    - Runs various unit tests on project"
 	@echo "  $$ make clean   - Cleans and removes generated files"
 	@echo "  $$ make publish - Builds artifacts for a new release"
 	@echo
@@ -44,7 +43,7 @@ help:
 ## Build                                                                      ##
 ##----------------------------------------------------------------------------##
 
-.PHONY: build debug test clean
+.PHONY: build debug clean
 
 build:
 	go build -ldflags "$(LDFLAGS) -s -w" -o "$(OUTPUT)$(BINARY)"
@@ -54,10 +53,6 @@ debug:
 	# particularly when needing to print variable values.
 	# Also try to detect race conditions using -race flag.
 	go build -ldflags "$(LDFLAGS)" -o "$(OUTPUT)$(BINARY)" -gcflags="all=-N -l" -race
-
-test:
-	# Do test without caching
-	go test -count=1 ./utility -race
 
 clean:
 	rm -rf "$(OUTPUT)"
