@@ -68,10 +68,8 @@ type ScannerState struct {
 	Result  ScannerResult
 
 	Process *leech.Process
-	Pid     uint32
-
-	Engine *leech.Module
-	Client *leech.Module
+	Engine  *leech.Module
+	Client  *leech.Module
 
 	Camera *leech.Memory
 	Action *leech.Memory
@@ -85,10 +83,8 @@ func NewScannerState() *ScannerState {
 		Result: ScannerResultNoValue,
 
 		Process: nil,
-		Pid:     0,
-
-		Engine: nil,
-		Client: nil,
+		Engine:  nil,
+		Client:  nil,
 
 		Camera: nil,
 		Action: nil,
@@ -103,10 +99,8 @@ func (s *ScannerState) Clone() *ScannerState {
 		Result: s.Result,
 
 		Process: s.Process,
-		Pid:     s.Pid,
-
-		Engine: s.Engine,
-		Client: s.Client,
+		Engine:  s.Engine,
+		Client:  s.Client,
 
 		Camera: s.Camera,
 		Action: s.Action,
@@ -122,9 +116,22 @@ func (s *ScannerState) Changed(val *ScannerState) bool {
 		return true
 	}
 
-	// If PID is the same
-	if val.Pid == s.Pid {
+	if s.Result != ScannerResultSuccess && val.Result != ScannerResultSuccess {
 		return false
+	}
+
+	if s.Result != ScannerResultSuccess && val.Result == ScannerResultSuccess {
+		return true
+	}
+
+	if s.Result == ScannerResultSuccess && val.Result != ScannerResultSuccess {
+		return true
+	}
+
+	if s.Result == ScannerResultSuccess && val.Result == ScannerResultSuccess {
+
+		// Check if another process has been attached to
+		return s.Process.GetPid() != val.Process.GetPid()
 	}
 
 	return true
@@ -154,7 +161,7 @@ func (g *Game) updateScanner(prev *ScannerState) *ScannerState {
 
 	{
 		// Attempt to list all the relevant game processes
-		processList, err := g.options.Leech.GetProcessList(GameProcessName)
+		processList, err := g.options.Leech.GetProcessList(GameProcessName, true)
 		if err != nil {
 			result.Result = ScannerResultProcessListError
 			return result
@@ -173,8 +180,6 @@ func (g *Game) updateScanner(prev *ScannerState) *ScannerState {
 		}
 
 		result.Process = processList[0]
-		// Shortcut for comparing processes
-		result.Pid = result.Process.GetPid()
 	}
 
 	//----------------------------------------------------------------------------//

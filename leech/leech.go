@@ -249,7 +249,7 @@ func (l *Leech) GetProcess(pid uint32) (*Process, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (l *Leech) GetProcessList(filter *regexp.Regexp) ([]*Process, error) {
+func (l *Leech) GetProcessList(filter *regexp.Regexp, onlyActive bool) ([]*Process, error) {
 
 	//----------------------------------------------------------------------------//
 
@@ -321,6 +321,11 @@ func (l *Leech) GetProcessList(filter *regexp.Regexp) ([]*Process, error) {
 			return nil, errors.New(
 				"process structure has a size mismatch",
 			)
+		}
+
+		// Skip processes that aren't running
+		if onlyActive && process.state != 0 {
+			continue
 		}
 
 		// Convert the name from a C-style string

@@ -95,12 +95,52 @@ func (g *Game) Create() error {
 
 	//----------------------------------------------------------------------------//
 
+	// Better logging
+	attached := false
+
 	g.options.Group.Go(func() error {
 		logger.Dbg("starting game scanner")
 
 		logger.Info("looking for the game")
+
 		for {
-			timer := time.NewTimer(1 * time.Second)
+			// Get current scanner state
+			prev := g.GetScannerState()
+
+			// Get the new scanner state
+			curr := g.updateScanner(prev)
+
+			// For debugging
+			if curr != prev {
+				logger.Dbg("scan complete", logger.String("status", curr.Result.String()))
+			}
+
+			// If the state changed
+			if curr.Changed(prev) {
+
+				// If attached or detached from the game
+				if curr.Result == ScannerResultSuccess {
+
+					attached = true
+					logger.Info(
+						"attached",
+						logger.Uint32("pid", curr.Process.GetPid()),
+						logger.String("engine", fmt.Sprintf("%08X", curr.Engine.GetBase())),
+						logger.String("client", fmt.Sprintf("%08X", curr.Client.GetBase())),
+					)
+
+				} else if attached {
+
+					attached = false
+					logger.Info("detached")
+				}
+
+				// Set new scanner state
+				g.SetScannerState(curr)
+			}
+
+			// Schedule the next time to do a scan
+			timer := time.NewTimer(4 * time.Second)
 
 			select {
 			// Wait for the cancel call
@@ -109,38 +149,8 @@ func (g *Game) Create() error {
 				timer.Stop()
 				return nil
 
-			// Handle timer signal
 			case <-timer.C:
-				// Get current scanner state
-				prev := g.GetScannerState()
-
-				// Get the new scanner state
-				curr := g.updateScanner(prev)
-
-				// For debugging
-				if curr != prev {
-					logger.Dbg("scan complete", logger.String("status", curr.Result.String()))
-				}
-
-				// If the state changed
-				if curr.Changed(prev) {
-
-					// If attached or detached from the game
-					if curr.Result == ScannerResultSuccess {
-						logger.Info(
-							"attached",
-							logger.Uint32("pid", curr.Process.GetPid()),
-							logger.String("engine", fmt.Sprintf("%08X", curr.Engine.GetBase())),
-							logger.String("client", fmt.Sprintf("%08X", curr.Client.GetBase())),
-						)
-
-					} else {
-						logger.Info("detached")
-					}
-
-					// Set new scanner state
-					g.SetScannerState(curr)
-				}
+				// Wait on timer signal
 			}
 		}
 	})
