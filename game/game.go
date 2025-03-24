@@ -3,21 +3,22 @@ package game
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/dkrutsko/oasis/leech"
 	"github.com/dkrutsko/oasis/logger"
-	"github.com/dkrutsko/oasis/runtime"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 
 type Options struct {
-	Group   *errgroup.Group
-	Gctx    context.Context
-	Runtime *runtime.Runtime
+	Group *errgroup.Group
+	Gctx  context.Context
+	Leech *leech.Leech
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -27,6 +28,11 @@ type Game struct {
 
 	scannerLock sync.RWMutex
 	scanner     *ScannerState
+
+	offsets   []byte
+	strCache  map[string]string
+	intCache  map[string]int64
+	cacheLock sync.RWMutex
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -35,6 +41,10 @@ func New(opts *Options) *Game {
 
 	g := &Game{
 		options: opts,
+
+		offsets:  nil,
+		strCache: make(map[string]string),
+		intCache: make(map[string]int64),
 	}
 
 	// Create empty scanner state
@@ -76,6 +86,15 @@ func (g *Game) Create() error {
 
 	//----------------------------------------------------------------------------//
 
+	var err error
+	// Try and read the contents of offsets file
+	g.offsets, err = os.ReadFile("./offsets.json")
+	if err != nil {
+		return err
+	}
+
+	//----------------------------------------------------------------------------//
+
 	g.options.Group.Go(func() error {
 		logger.Dbg("starting game scanner")
 
@@ -106,8 +125,8 @@ func (g *Game) Create() error {
 						logger.Info(
 							"attached",
 							logger.Uint32("pid", curr.PID),
-							logger.String("engine", fmt.Sprintf("%08X", curr.EngineBase)),
-							logger.String("client", fmt.Sprintf("%08X", curr.ClientBase)),
+							logger.String("engine", fmt.Sprintf("0x%08X", curr.EngineBase)),
+							logger.String("client", fmt.Sprintf("0x%08X", curr.ClientBase)),
 						)
 
 					} else {

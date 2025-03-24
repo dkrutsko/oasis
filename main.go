@@ -13,8 +13,8 @@ import (
 
 	"github.com/dkrutsko/oasis/config"
 	"github.com/dkrutsko/oasis/game"
+	"github.com/dkrutsko/oasis/leech"
 	"github.com/dkrutsko/oasis/logger"
-	"github.com/dkrutsko/oasis/runtime"
 	"github.com/dkrutsko/oasis/server"
 )
 
@@ -51,12 +51,12 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
-	r := runtime.New()
+	l := leech.New("-device", "fpga")
 
-	err = r.Create()
+	err = l.Create()
 	if err != nil {
 		logger.Err(
-			"failed to create runtime",
+			"failed to initialize leech",
 			logger.Error("error", err),
 		)
 		return
@@ -75,9 +75,9 @@ func main() {
 
 	g := game.New(
 		&game.Options{
-			Group:   group,
-			Gctx:    gctx,
-			Runtime: r,
+			Group: group,
+			Gctx:  gctx,
+			Leech: l,
 		},
 	)
 
@@ -118,6 +118,18 @@ func main() {
 	if err != nil {
 		logger.Err(
 			"failed during main loop",
+			logger.Error("error", err),
+		)
+		return
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Release handle
+	err = l.Close()
+	if err != nil {
+		logger.Err(
+			"failed to close leech",
 			logger.Error("error", err),
 		)
 		return
@@ -175,39 +187,12 @@ func logSplash() {
 	// Try to retrieve the version
 	version := config.GetVersion()
 
-	// Get application config
-	cfg := config.GetConfig()
-
-	if cfg.Debug {
-
-		logger.Info(
-			"launching oasis",
-			logger.Time("date", version.Date),
-			logger.Uint16("build", version.Build),
-			logger.Uint16("rev", version.Rev),
-			logger.Group("runtime",
-				logger.String("version", version.Runtime.Version),
-				logger.String("os", version.Runtime.OS),
-				logger.String("arch", version.Runtime.Arch),
-			),
-			logger.Group("git",
-				logger.String("long", version.Git.Long),
-				logger.String("short", version.Git.Short),
-				logger.Time("date", version.Git.Date),
-				logger.String("branch", version.Git.Branch),
-				logger.Bool("dirty", version.Git.Dirty),
-			),
-		)
-
-	} else {
-
-		logger.Info(
-			"launching oasis",
-			logger.Time("date", version.Date),
-			logger.Uint16("build", version.Build),
-			logger.Uint16("rev", version.Rev),
-		)
-	}
+	logger.Info(
+		"launching oasis",
+		logger.Time("date", version.Date),
+		logger.Uint16("build", version.Build),
+		logger.Uint16("rev", version.Rev),
+	)
 }
 
 ////////////////////////////////////////////////////////////////////////////////

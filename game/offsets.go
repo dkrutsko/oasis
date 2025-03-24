@@ -1,4 +1,4 @@
-package runtime
+package game
 
 import (
 	"path/filepath"
@@ -8,10 +8,10 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Runtime) GetOffsetsStr(keys ...string) (string, bool) {
+func (g *Game) GetOffsetsStr(keys ...string) (string, bool) {
 
-	// Check for keys and if offsets are loaded
-	if len(keys) == 0 || r.offsetsData == nil {
+	// If keys exist and offsets are loaded
+	if len(keys) == 0 || g.offsets == nil {
 		return "", false
 	}
 
@@ -19,34 +19,34 @@ func (r *Runtime) GetOffsetsStr(keys ...string) (string, bool) {
 	key := filepath.Join(keys...)
 	key = filepath.Join("offsets", key)
 
-	r.lock.RLock()
+	g.cacheLock.RLock()
 	// Check whether the data is cached
-	if value, ok := r.strCache[key]; ok {
-		r.lock.RUnlock()
+	if value, ok := g.strCache[key]; ok {
+		g.cacheLock.RUnlock()
 		return value, true
 	}
-	r.lock.RUnlock()
+	g.cacheLock.RUnlock()
 
 	// Try to get the value
-	value, err := jsonparser.GetString(r.offsetsData, keys...)
+	value, err := jsonparser.GetString(g.offsets, keys...)
 	if err != nil {
 		return "", false
 	}
 
-	r.lock.Lock()
+	g.cacheLock.Lock()
 	// Store data in cache
-	r.strCache[key] = value
-	r.lock.Unlock()
+	g.strCache[key] = value
+	g.cacheLock.Unlock()
 
 	return value, true
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Runtime) GetOffsetsInt(keys ...string) (int64, bool) {
+func (g *Game) GetOffsetsInt(keys ...string) (int64, bool) {
 
-	// Check for keys and if offsets are loaded
-	if len(keys) == 0 || r.offsetsData == nil {
+	// If keys exist and offsets are loaded
+	if len(keys) == 0 || g.offsets == nil {
 		return 0, false
 	}
 
@@ -54,24 +54,24 @@ func (r *Runtime) GetOffsetsInt(keys ...string) (int64, bool) {
 	key := filepath.Join(keys...)
 	key = filepath.Join("offsets", key)
 
-	r.lock.RLock()
+	g.cacheLock.RLock()
 	// Check whether the data is cached
-	if value, ok := r.intCache[key]; ok {
-		r.lock.RUnlock()
+	if value, ok := g.intCache[key]; ok {
+		g.cacheLock.RUnlock()
 		return value, true
 	}
-	r.lock.RUnlock()
+	g.cacheLock.RUnlock()
 
 	// Try to get the value
-	value, err := jsonparser.GetInt(r.offsetsData, keys...)
+	value, err := jsonparser.GetInt(g.offsets, keys...)
 	if err != nil {
 		return 0, false
 	}
 
-	r.lock.Lock()
+	g.cacheLock.Lock()
 	// Store data in cache
-	r.intCache[key] = value
-	r.lock.Unlock()
+	g.intCache[key] = value
+	g.cacheLock.Unlock()
 
 	return value, true
 }
