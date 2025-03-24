@@ -117,6 +117,11 @@ func (g *Game) Create() error {
 				// Get the new scanner state
 				curr := g.updateScanner(prev)
 
+				// For debugging
+				if curr != prev {
+					logger.Dbg("scan complete", logger.String("status", curr.Result.String()))
+				}
+
 				// If the state changed
 				if curr.Changed(prev) {
 
@@ -124,9 +129,9 @@ func (g *Game) Create() error {
 					if curr.Result == ScannerResultSuccess {
 						logger.Info(
 							"attached",
-							logger.Uint32("pid", curr.PID),
-							logger.String("engine", fmt.Sprintf("0x%08X", curr.EngineBase)),
-							logger.String("client", fmt.Sprintf("0x%08X", curr.ClientBase)),
+							logger.Uint32("pid", curr.Process.GetPid()),
+							logger.String("engine", fmt.Sprintf("%08X", curr.Engine.GetBase())),
+							logger.String("client", fmt.Sprintf("%08X", curr.Client.GetBase())),
 						)
 
 					} else {
@@ -175,12 +180,12 @@ func (g *Game) Create() error {
 	//----------------------------------------------------------------------------//
 
 	g.options.Group.Go(func() error {
-		logger.Dbg("starting content updater")
+		logger.Dbg("starting action updater")
 
 		for {
 			// Check whether stopping the app
 			if g.options.Gctx.Err() != nil {
-				logger.Dbg("stopping content updater")
+				logger.Dbg("stopping action updater")
 				return nil
 			}
 
@@ -191,7 +196,7 @@ func (g *Game) Create() error {
 			scanner := g.GetScannerState()
 
 			// Perform the update
-			g.updateContent(scanner)
+			g.updateAction(scanner)
 
 			// Calculate time for update
 			elapsed := time.Since(start)

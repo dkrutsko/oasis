@@ -28,6 +28,14 @@ type Memory struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (m *Memory) IsValid() bool {
+
+	// If process is valid
+	return m.proc.IsValid()
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (m *Memory) GetProcess() *Process {
 	return m.proc
 }
@@ -356,16 +364,16 @@ func (m *Memory) GetPageSize() uintptr {
 /*func (m *Memory) ReadData(address uintptr, result void*, length uintptr) uintptr {
 
 	// TODO: Caching needs a mutex
-
-	// NYI
+	// NYI:
 	return 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadType(address uintptr, result void*, length uintptr) uintptr {
+func (m *Memory) readType(address uintptr, result void*, length uintptr) uintptr {
 
-	// NYI
+	// TODO: Caching needs a mutex
+	// NYI:
 	return 0
 }*/
 

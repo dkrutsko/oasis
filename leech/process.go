@@ -20,6 +20,22 @@ type Process struct {
 
 	peb   uint64
 	peb32 uint32
+
+	exited bool
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (p *Process) IsValid() bool {
+
+	// Try and retrieve the process using PID
+	process, err := p.leech.GetProcess(p.pid)
+	if err != nil {
+		return false
+	}
+
+	// Process still valid
+	return process != nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -50,6 +66,24 @@ func (p *Process) GetPeb() uint64 {
 
 func (p *Process) GetPeb32() uint32 {
 	return p.peb32
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (p *Process) HasExited() bool {
+
+	// Try and retrieve the process using PID
+	process, err := p.leech.GetProcess(p.pid)
+	if err != nil {
+		return true
+	}
+
+	// If process valid
+	if process != nil {
+		return process.exited
+	}
+
+	return true
 }
 
 ////////////////////////////////////////////////////////////////////////////////

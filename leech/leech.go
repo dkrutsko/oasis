@@ -214,26 +214,30 @@ func (l *Leech) GetProcess(pid uint32) (*Process, error) {
 		)
 	}
 
-	// If process running
-	if process.state == 0 {
+	// Perform sanity check
+	if process.pid != pid {
+		return nil, errors.New(
+			"failed to query for requested process",
+		)
+	}
 
-		// Convert the name from a C-style string
-		name := cStrToString(process.nameLong[:])
+	// Convert the name from a C-style string
+	name := cStrToString(process.nameLong[:])
 
-		is64Bit := false
-		// If 32-bit app is running on 64-bit system
-		if process.system == vmmSystemTypeWindows64 {
-			is64Bit = process.win.wow64 == 0
-		}
+	is64Bit := false
+	// If 32-bit app is running on 64-bit system
+	if process.system == vmmSystemTypeWindows64 {
+		is64Bit = process.win.wow64 == 0
+	}
 
-		result = &Process{
-			leech:   l,
-			pid:     process.pid,
-			name:    name,
-			peb:     process.win.peb,
-			peb32:   process.win.peb32,
-			is64Bit: is64Bit,
-		}
+	result = &Process{
+		leech:   l,
+		pid:     process.pid,
+		name:    name,
+		is64Bit: is64Bit,
+		peb:     process.win.peb,
+		peb32:   process.win.peb32,
+		exited:  process.state != 0,
 	}
 
 	//----------------------------------------------------------------------------//
@@ -319,32 +323,29 @@ func (l *Leech) GetProcessList(filter *regexp.Regexp) ([]*Process, error) {
 			)
 		}
 
-		// If process running
-		if process.state == 0 {
+		// Convert the name from a C-style string
+		name := cStrToString(process.nameLong[:])
 
-			// Convert the name from a C-style string
-			name := cStrToString(process.nameLong[:])
+		is64Bit := false
+		// If 32-bit app is running on 64-bit system
+		if process.system == vmmSystemTypeWindows64 {
+			is64Bit = process.win.wow64 == 0
+		}
 
-			is64Bit := false
-			// If 32-bit app is running on 64-bit system
-			if process.system == vmmSystemTypeWindows64 {
-				is64Bit = process.win.wow64 == 0
+		// Check the name if name filter was specified
+		if filter == nil || filter.MatchString(name) {
+
+			p := &Process{
+				leech:   l,
+				pid:     process.pid,
+				name:    name,
+				is64Bit: is64Bit,
+				peb:     process.win.peb,
+				peb32:   process.win.peb32,
+				exited:  process.state != 0,
 			}
 
-			// Check the name if name filter was specified
-			if filter == nil || filter.MatchString(name) {
-
-				p := &Process{
-					leech:   l,
-					pid:     process.pid,
-					name:    name,
-					peb:     process.win.peb,
-					peb32:   process.win.peb32,
-					is64Bit: is64Bit,
-				}
-
-				result = append(result, p)
-			}
+			result = append(result, p)
 		}
 	}
 

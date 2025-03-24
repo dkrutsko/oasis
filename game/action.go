@@ -2,7 +2,7 @@ package game
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (g *Game) updateCamera(scanner *ScannerState) {
+func (g *Game) updateAction(scanner *ScannerState) {
 
 	// Check if a game has been selected and is currently valid
 	if scanner == nil || scanner.Result != ScannerResultSuccess {
