@@ -263,6 +263,153 @@ func (v Vector4) Neg() Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (v Vector4) Compare(value Vector4) int {
+
+	if v.X < value.X {
+		return -1
+	}
+	if v.X > value.X {
+		return 1
+	}
+
+	if v.Y < value.Y {
+		return -1
+	}
+	if v.Y > value.Y {
+		return 1
+	}
+
+	if v.Z < value.Z {
+		return -1
+	}
+	if v.Z > value.Z {
+		return 1
+	}
+
+	if v.W < value.W {
+		return -1
+	}
+	if v.W > value.W {
+		return 1
+	}
+
+	return 0
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) Lt(value Vector4) bool {
+
+	if v.X < value.X {
+		return true
+	}
+	if v.X > value.X {
+		return false
+	}
+
+	if v.Y < value.Y {
+		return true
+	}
+	if v.Y > value.Y {
+		return false
+	}
+
+	if v.Z < value.Z {
+		return true
+	}
+	if v.Z > value.Z {
+		return false
+	}
+
+	return v.W < value.W
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) Gt(value Vector4) bool {
+
+	if v.X > value.X {
+		return true
+	}
+	if v.X < value.X {
+		return false
+	}
+
+	if v.Y > value.Y {
+		return true
+	}
+	if v.Y < value.Y {
+		return false
+	}
+
+	if v.Z > value.Z {
+		return true
+	}
+	if v.Z < value.Z {
+		return false
+	}
+
+	return v.W > value.W
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) Le(value Vector4) bool {
+
+	if v.X < value.X {
+		return true
+	}
+	if v.X > value.X {
+		return false
+	}
+
+	if v.Y < value.Y {
+		return true
+	}
+	if v.Y > value.Y {
+		return false
+	}
+
+	if v.Z < value.Z {
+		return true
+	}
+	if v.Z > value.Z {
+		return false
+	}
+
+	return v.W <= value.W
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) Ge(value Vector4) bool {
+
+	if v.X > value.X {
+		return true
+	}
+	if v.X < value.X {
+		return false
+	}
+
+	if v.Y > value.Y {
+		return true
+	}
+	if v.Y < value.Y {
+		return false
+	}
+
+	if v.Z > value.Z {
+		return true
+	}
+	if v.Z < value.Z {
+		return false
+	}
+
+	return v.W >= value.W
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (v Vector4) Eq(value Vector4) bool {
 
 	return v.X == value.X && v.Y == value.Y && v.Z == value.Z && v.W == value.W

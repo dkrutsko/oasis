@@ -263,6 +263,118 @@ func (v Vector3) Neg() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (v Vector3) Compare(value Vector3) int {
+
+	if v.X < value.X {
+		return -1
+	}
+	if v.X > value.X {
+		return 1
+	}
+
+	if v.Y < value.Y {
+		return -1
+	}
+	if v.Y > value.Y {
+		return 1
+	}
+
+	if v.Z < value.Z {
+		return -1
+	}
+	if v.Z > value.Z {
+		return 1
+	}
+
+	return 0
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) Lt(value Vector3) bool {
+
+	if v.X < value.X {
+		return true
+	}
+	if v.X > value.X {
+		return false
+	}
+
+	if v.Y < value.Y {
+		return true
+	}
+	if v.Y > value.Y {
+		return false
+	}
+
+	return v.Z < value.Z
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) Gt(value Vector3) bool {
+
+	if v.X > value.X {
+		return true
+	}
+	if v.X < value.X {
+		return false
+	}
+
+	if v.Y > value.Y {
+		return true
+	}
+	if v.Y < value.Y {
+		return false
+	}
+
+	return v.Z > value.Z
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) Le(value Vector3) bool {
+
+	if v.X < value.X {
+		return true
+	}
+	if v.X > value.X {
+		return false
+	}
+
+	if v.Y < value.Y {
+		return true
+	}
+	if v.Y > value.Y {
+		return false
+	}
+
+	return v.Z <= value.Z
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) Ge(value Vector3) bool {
+
+	if v.X > value.X {
+		return true
+	}
+	if v.X < value.X {
+		return false
+	}
+
+	if v.Y > value.Y {
+		return true
+	}
+	if v.Y < value.Y {
+		return false
+	}
+
+	return v.Z >= value.Z
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (v Vector3) Eq(value Vector3) bool {
 
 	return v.X == value.X && v.Y == value.Y && v.Z == value.Z

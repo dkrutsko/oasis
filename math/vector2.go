@@ -219,6 +219,83 @@ func (v Vector2) Neg() Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (v Vector2) Compare(value Vector2) int {
+
+	if v.X < value.X {
+		return -1
+	}
+	if v.X > value.X {
+		return 1
+	}
+
+	if v.Y < value.Y {
+		return -1
+	}
+	if v.Y > value.Y {
+		return 1
+	}
+
+	return 0
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector2) Lt(value Vector2) bool {
+
+	if v.X < value.X {
+		return true
+	}
+	if v.X > value.X {
+		return false
+	}
+
+	return v.Y < value.Y
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector2) Gt(value Vector2) bool {
+
+	if v.X > value.X {
+		return true
+	}
+	if v.X < value.X {
+		return false
+	}
+
+	return v.Y > value.Y
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector2) Le(value Vector2) bool {
+
+	if v.X < value.X {
+		return true
+	}
+	if v.X > value.X {
+		return false
+	}
+
+	return v.Y <= value.Y
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector2) Ge(value Vector2) bool {
+
+	if v.X > value.X {
+		return true
+	}
+	if v.X < value.X {
+		return false
+	}
+
+	return v.Y >= value.Y
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (v Vector2) Eq(value Vector2) bool {
 
 	return v.X == value.X && v.Y == value.Y
