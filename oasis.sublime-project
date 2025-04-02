@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": ".",
+
+			"folder_exclude_patterns": [
+				".idea",
+				".svelte-kit",
+				"bin",
+				"content",
+				"node_modules",
+			],
+
+			"file_exclude_patterns": [
+				".gitkeep",
+				"deno.lock"
+			]
+		}
+	]
+}
