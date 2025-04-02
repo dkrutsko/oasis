@@ -65,14 +65,11 @@ func (s ScannerResult) String() string {
 ////////////////////////////////////////////////////////////////////////////////
 
 type ScannerState struct {
-	Result  ScannerResult
+	Result ScannerResult
 
 	Process *leech.Process
 	Engine  *leech.Module
 	Client  *leech.Module
-
-	Camera *leech.Memory
-	Action *leech.Memory
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -85,25 +82,6 @@ func NewScannerState() *ScannerState {
 		Process: nil,
 		Engine:  nil,
 		Client:  nil,
-
-		Camera: nil,
-		Action: nil,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func (s *ScannerState) Clone() *ScannerState {
-
-	return &ScannerState{
-		Result: s.Result,
-
-		Process: s.Process,
-		Engine:  s.Engine,
-		Client:  s.Client,
-
-		Camera: s.Camera,
-		Action: s.Action,
 	}
 }
 
@@ -240,12 +218,6 @@ func (g *Game) updateScanner(prev *ScannerState) *ScannerState {
 			return result
 		}
 	}
-
-	//----------------------------------------------------------------------------//
-
-	// Retrieve the memory for all the readers
-	result.Camera = result.Process.GetMemory()
-	result.Action = result.Process.GetMemory()
 
 	//----------------------------------------------------------------------------//
 

@@ -26,13 +26,14 @@ type Options struct {
 type Game struct {
 	options *Options
 
-	scannerLock sync.RWMutex
-	scanner     *ScannerState
+	scanner *ScannerState
+	action  *ActionState
+	camera  *CameraState
 
-	offsets   []byte
+	offsets   map[string][]byte
 	strCache  map[string]string
-	intCache  map[string]int64
-	cacheLock sync.RWMutex
+	intCache  map[string]uintptr
+	cacheLock sync.Mutex
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -42,42 +43,34 @@ func New(opts *Options) *Game {
 	g := &Game{
 		options: opts,
 
-		offsets:  nil,
+		scanner: NewScannerState(),
+		action:  NewActionState(),
+		camera:  NewCameraState(),
+
+		offsets:  make(map[string][]byte),
 		strCache: make(map[string]string),
-		intCache: make(map[string]int64),
+		intCache: make(map[string]uintptr),
 	}
 
-	// Create empty scanner state
-	g.scanner = NewScannerState()
 	return g
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 func (g *Game) GetScannerState() *ScannerState {
-
-	// Lock when getting
-	g.scannerLock.RLock()
-	defer g.scannerLock.RUnlock()
-
-	if g.scanner != nil {
-		// Return clone of state
-		return g.scanner.Clone()
-	}
-
-	return nil
+	return g.scanner
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (g *Game) SetScannerState(s *ScannerState) {
+func (g *Game) GetActionState() *ActionState {
+	return g.action
+}
 
-	// Lock when setting
-	g.scannerLock.Lock()
-	defer g.scannerLock.Unlock()
+////////////////////////////////////////////////////////////////////////////////
 
-	// Set state
-	g.scanner = s
+func (g *Game) GetCameraState() *CameraState {
+	return g.camera
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -86,11 +79,21 @@ func (g *Game) Create() error {
 
 	//----------------------------------------------------------------------------//
 
-	var err error
-	// Try and read the contents of offsets file
-	g.offsets, err = os.ReadFile("./offsets.json")
-	if err != nil {
-		return err
+	{
+		// Try and read the contents of offsets file
+		offsets, err := os.ReadFile("./offsets.json")
+		if err != nil {
+			return err
+		}
+
+		// Try and read the contents of client_dll file
+		client, err := os.ReadFile("./client_dll.json")
+		if err != nil {
+			return err
+		}
+
+		g.offsets["offsets"] = offsets
+		g.offsets["client_dll"] = client
 	}
 
 	//----------------------------------------------------------------------------//
@@ -104,29 +107,25 @@ func (g *Game) Create() error {
 		logger.Info("looking for the game")
 
 		for {
-			// Get current scanner state
-			prev := g.GetScannerState()
+			// Retrieve the new scanner state
+			next := g.updateScanner(g.scanner)
 
-			// Get the new scanner state
-			curr := g.updateScanner(prev)
-
-			// For debugging
-			if curr != prev {
-				logger.Dbg("scan complete", logger.String("status", curr.Result.String()))
+			if next != g.scanner {
+				logger.Dbg("scan complete", logger.String("status", next.Result.String()))
 			}
 
-			// If the state changed
-			if curr.Changed(prev) {
+			// Whether the state changed
+			if next.Changed(g.scanner) {
 
 				// If attached or detached from the game
-				if curr.Result == ScannerResultSuccess {
+				if next.Result == ScannerResultSuccess {
 
 					attached = true
 					logger.Info(
 						"attached",
-						logger.Uint32("pid", curr.Process.GetPid()),
-						logger.String("engine", fmt.Sprintf("%08X", curr.Engine.GetBase())),
-						logger.String("client", fmt.Sprintf("%08X", curr.Client.GetBase())),
+						logger.Uint32("pid", next.Process.GetPid()),
+						logger.String("engine", fmt.Sprintf("%08X", next.Engine.GetBase())),
+						logger.String("client", fmt.Sprintf("%08X", next.Client.GetBase())),
 					)
 
 				} else if attached {
@@ -135,8 +134,8 @@ func (g *Game) Create() error {
 					logger.Info("detached")
 				}
 
-				// Set new scanner state
-				g.SetScannerState(curr)
+				// Set new state
+				g.scanner = next
 			}
 
 			// Schedule the next time to do a scan
@@ -158,23 +157,25 @@ func (g *Game) Create() error {
 	//----------------------------------------------------------------------------//
 
 	g.options.Group.Go(func() error {
-		logger.Dbg("starting camera updater")
+		logger.Dbg("starting action updater")
 
 		for {
 			// Check whether stopping the app
 			if g.options.Gctx.Err() != nil {
-				logger.Dbg("stopping camera updater")
+				logger.Dbg("stopping action updater")
 				return nil
 			}
 
 			// Get a start time
 			start := time.Now()
 
-			// Get current scanner state
-			scanner := g.GetScannerState()
+			// Retrieve the new action state
+			next := g.updateAction(g.scanner)
 
-			// Perform the update
-			g.updateCamera(scanner)
+			// Set state if update was successful
+			if next.Result == ActionResultSuccess {
+				g.action = next
+			}
 
 			// Calculate time for update
 			elapsed := time.Since(start)
@@ -190,23 +191,26 @@ func (g *Game) Create() error {
 	//----------------------------------------------------------------------------//
 
 	g.options.Group.Go(func() error {
-		logger.Dbg("starting action updater")
+		logger.Dbg("starting camera updater")
 
 		for {
 			// Check whether stopping the app
 			if g.options.Gctx.Err() != nil {
-				logger.Dbg("stopping action updater")
+				logger.Dbg("stopping camera updater")
 				return nil
 			}
 
 			// Get a start time
 			start := time.Now()
 
-			// Get current scanner state
-			scanner := g.GetScannerState()
+			// Retrieve the new camera state
+			next := g.updateCamera(g.scanner)
 
-			// Perform the update
-			g.updateAction(scanner)
+			// Set state if update was successful
+			if next.Result == CameraResultSuccess {
+				g.camera = next
+				//fmt.Println(g.camera.View.String()) // TODO: REMOVE THIS LINE
+			}
 
 			// Calculate time for update
 			elapsed := time.Since(start)
