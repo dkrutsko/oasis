@@ -37,7 +37,6 @@ type VmmDll struct {
 	mapGetModuleW *windows.Proc
 	mapGetVadW    *windows.Proc
 	mapGetPteW    *windows.Proc
-	memReadPage   *windows.Proc
 	memReadEx     *windows.Proc
 }
 
@@ -60,7 +59,7 @@ func loadVmmDll() error {
 		return nil
 	}
 
-	// Lock when loading
+	// Lock for load
 	vmmDllLock.Lock()
 	defer vmmDllLock.Unlock()
 
@@ -130,11 +129,6 @@ func loadVmmDll() error {
 	}
 
 	result.mapGetPteW, err = result.dll.FindProc("VMMDLL_Map_GetPteW")
-	if err != nil {
-		return err
-	}
-
-	result.memReadPage, err = result.dll.FindProc("VMMDLL_MemReadPage")
 	if err != nil {
 		return err
 	}

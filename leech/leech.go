@@ -182,12 +182,14 @@ func (l *Leech) GetProcess(pid uint32) (*Process, error) {
 	if err.(windows.Errno) != 0 {
 		return nil, errors.New(
 			"failed to get process info",
+			errors.Uint32("pid", pid),
 			errors.Error("error", err),
 		)
 	}
 	if success == 0 {
 		return nil, errors.New(
 			"failed to get process info",
+			errors.Uint32("pid", pid),
 		)
 	}
 

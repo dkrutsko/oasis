@@ -94,11 +94,12 @@ func (p *Process) GetModules(filter *regexp.Regexp) ([]*Module, error) {
 
 	var result []*Module
 
+	// Lock for retrieval
 	p.leech.lock.RLock()
 	defer p.leech.lock.RUnlock()
 
-	// Make sure that there is a valid leech handle and PID
-	if p.leech == nil || p.leech.handle == 0 || p.pid == 0 {
+	// Make sure handle and PID are valid
+	if p.leech.handle == 0 || p.pid == 0 {
 		return nil, errors.New("process is not valid")
 	}
 
@@ -115,12 +116,14 @@ func (p *Process) GetModules(filter *regexp.Regexp) ([]*Module, error) {
 	if err.(windows.Errno) != 0 {
 		return nil, errors.New(
 			"failed to get modules",
+			errors.Uint32("pid", p.pid),
 			errors.Error("error", err),
 		)
 	}
 	if success == 0 {
 		return nil, errors.New(
 			"failed to get modules",
+			errors.Uint32("pid", p.pid),
 		)
 	}
 
@@ -188,13 +191,13 @@ func (p *Process) GetModules(filter *regexp.Regexp) ([]*Module, error) {
 
 func (p *Process) GetMemory() *Memory {
 
-	// TODO: Create memory cache
-
 	m := &Memory{
 		leech: p.leech,
 		proc:  p,
 	}
 
+	// Clear all data in memory cache
+	m.cache = make(map[uintptr][]byte)
 	return m
 }
 

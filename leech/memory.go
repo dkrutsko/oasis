@@ -1,6 +1,9 @@
 package leech
 
 import (
+	"encoding/binary"
+	"math"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -14,16 +17,8 @@ type Memory struct {
 	leech *Leech
 	proc  *Process
 
-	//cache []byte
-	//pages PageMap
-	//next  uintptr
-
-	//blockLength uintptr
-	//blockBuffer uintptr
-
-	//cacheSize   uintptr
-	//enlargeSize uintptr
-	//maximumSize uintptr
+	cache map[uintptr][]byte
+	lock  sync.Mutex
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -48,11 +43,12 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 
 	var result []*Region
 
+	// Lock for retrieval
 	m.leech.lock.RLock()
 	defer m.leech.lock.RUnlock()
 
-	// Make sure that there is a valid leech handle and process ID
-	if m.leech == nil || m.leech.handle == 0 || m.proc.pid == 0 {
+	// Make sure that handle and PID are valid
+	if m.leech.handle == 0 || m.proc.pid == 0 {
 		return nil, errors.New("process is not valid")
 	}
 
@@ -94,12 +90,14 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 	if err.(windows.Errno) != 0 {
 		return nil, errors.New(
 			"failed to get vad info",
+			errors.Uint32("pid", m.proc.pid),
 			errors.Error("error", err),
 		)
 	}
 	if success == 0 {
 		return nil, errors.New(
 			"failed to get vad info",
+			errors.Uint32("pid", m.proc.pid),
 		)
 	}
 
@@ -238,12 +236,14 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 		if err.(windows.Errno) != 0 {
 			return nil, errors.New(
 				"failed to get pte info",
+				errors.Uint32("pid", m.proc.pid),
 				errors.Error("error", err),
 			)
 		}
 		if success == 0 {
 			return nil, errors.New(
 				"failed to get pte info",
+				errors.Uint32("pid", m.proc.pid),
 			)
 		}
 
@@ -291,8 +291,11 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 
 func (m *Memory) ClearCache() {
 
-	// TODO: Caching needs a mutex
-	// NYI:
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	// Clear all data in memory cache
+	m.cache = make(map[uintptr][]byte)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -361,105 +364,715 @@ func (m *Memory) GetPageSize() uintptr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/*func (m *Memory) ReadData(address uintptr, result void*, length uintptr) uintptr {
+func (m *Memory) readPage(address uintptr) ([]byte, error) {
 
-	// TODO: Caching needs a mutex
-	// NYI:
-	return 0
+	//----------------------------------------------------------------------------//
+
+	// Retrieve size of a page
+	pageSize := m.GetPageSize()
+
+	// Check if address aligned
+	if address%pageSize != 0 {
+		return nil, errors.New("address is unaligned")
+	}
+
+	// Lock for retrieval
+	m.leech.lock.RLock()
+	defer m.leech.lock.RUnlock()
+
+	// Make sure that handle and PID are valid
+	if m.leech.handle == 0 || m.proc.pid == 0 {
+		return nil, errors.New("process is not valid")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	var bytesRead uint32
+	// Make buffer to hold the data
+	result := make([]byte, pageSize)
+
+	// Attempt to read the memory of the page
+	success, _, err := vmmDll.memReadEx.Call(
+		m.leech.handle,
+		uintptr(m.proc.pid),
+		address,
+		uintptr(unsafe.Pointer(&result[0])),
+		pageSize,
+		uintptr(unsafe.Pointer(&bytesRead)),
+		uintptr(0x1), // VMMDLL_FLAG_NOCACHE
+	)
+	if err.(windows.Errno) != 0 {
+		return nil, errors.New(
+			"failed to read page",
+			errors.Uint32("pid", m.proc.pid),
+			errors.Uintptr("address", address),
+			errors.Error("error", err),
+		)
+	}
+	if success == 0 {
+		return nil, errors.New(
+			"failed to read page",
+			errors.Uint32("pid", m.proc.pid),
+			errors.Uintptr("address", address),
+		)
+	}
+
+	if uintptr(bytesRead) != pageSize {
+		return result, errors.New(
+			"not enough bytes have been read",
+			errors.Uint32("pid", m.proc.pid),
+			errors.Uintptr("address", address),
+			errors.Uint32("read", bytesRead),
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	return result, nil
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) readType(address uintptr, result void*, length uintptr) uintptr {
+func (m *Memory) ReadData(address uintptr, length uintptr) ([]byte, error) {
 
-	// TODO: Caching needs a mutex
-	// NYI:
-	return 0
-}*/
+	// Check length
+	if length == 0 {
+		return nil, errors.New("length must be greater than zero")
+	}
 
-////////////////////////////////////////////////////////////////////////////////
+	// Address is within min bounds
+	if address < m.GetMinAddress() {
+		return nil, errors.New("address is below minimum address")
+	}
 
-func (m *Memory) ReadInt8(address uintptr, count uint32, stride uint32) int8 {
+	// Address is within max bounds
+	if address+length > m.GetMaxAddress() {
+		return nil, errors.New("address is above maximum address")
+	}
 
-	// NYI:
-	return 0
-	//return m.readType(address, native.Memory._TYPE_INT8, 1, count, stride)
+	var offset uintptr = 0
+	// Make buffer to hold result
+	result := make([]byte, length)
+
+	// Retrieve size of a page
+	pageSize := m.GetPageSize()
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	// Perform page reads
+	for offset < length {
+
+		// Calculate alignment to current start of page
+		aligned := (address + offset) &^ (pageSize - 1)
+
+		// Check if page is in cache
+		cache, ok := m.cache[aligned]
+		if !ok {
+			// Try and read the entire page
+			data, err := m.readPage(aligned)
+			if err != nil {
+				return nil, err
+			}
+
+			// Cache read page data
+			m.cache[aligned] = data
+			cache = data
+		}
+
+		offsetInPage := (address + offset) - aligned
+
+		bytesToCopy := pageSize - offsetInPage
+		// Calculate how much to copy from this page
+		if rem := length - offset; bytesToCopy > rem {
+			bytesToCopy = rem
+		}
+
+		// Copy portion from cached page into result
+		copy(result[offset:], cache[offsetInPage:offsetInPage+bytesToCopy])
+		offset += bytesToCopy
+	}
+
+	return result, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadInt16(address uintptr, count uint32, stride uint32) int16 {
+type MemType int
 
-	// NYI:
-	return 0
-	//return m.readType(address, native.Memory._TYPE_INT16, 2, count, stride)
+const (
+	MemTypeBuffer  MemType = 0x0
+	MemTypeInt8    MemType = 0x1
+	MemTypeInt16   MemType = 0x2
+	MemTypeInt32   MemType = 0x3
+	MemTypeInt64   MemType = 0x4
+	MemTypeFloat32 MemType = 0x5
+	MemTypeFloat64 MemType = 0x6
+	MemTypeBool    MemType = 0x7
+	MemTypeString  MemType = 0x8
+)
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadTypes(
+	address uintptr,
+	memType MemType,
+	length, count, stride uint32,
+) ([]any, error) {
+
+	// If there's anything to read
+	if count == 0 || length == 0 {
+		return nil, nil
+	}
+
+	// Default stride
+	if stride == 0 {
+		stride = length
+	}
+
+	// Check the stride
+	if stride < length {
+		return nil, errors.New(
+			"stride is too small",
+			errors.Uint32("stride", stride),
+			errors.Uint32("length", length),
+		)
+	}
+
+	size := count*stride + length - stride
+	// Try and read all required memory in one call
+	data, err := m.ReadData(address, uintptr(size))
+	if err != nil {
+		return nil, err
+	}
+
+	offset := uint32(0)
+	// Create all the result data
+	results := make([]any, count)
+
+	// Read for required number of values
+	for i := uint32(0); i < count; i++ {
+
+		slice := data[offset : offset+length]
+
+		switch memType {
+		case MemTypeBuffer:
+			results[i] = slice
+
+		case MemTypeInt8:
+			results[i] = int8(slice[0])
+
+		case MemTypeInt16:
+			results[i] = int16(binary.LittleEndian.Uint16(slice))
+
+		case MemTypeInt32:
+			results[i] = int32(binary.LittleEndian.Uint32(slice))
+
+		case MemTypeInt64:
+			results[i] = int64(binary.LittleEndian.Uint64(slice))
+
+		case MemTypeFloat32:
+			bits := binary.LittleEndian.Uint32(slice)
+			results[i] = math.Float32frombits(bits)
+
+		case MemTypeFloat64:
+			bits := binary.LittleEndian.Uint64(slice)
+			results[i] = math.Float64frombits(bits)
+
+		case MemTypeBool:
+			results[i] = slice[0] != 0
+
+		case MemTypeString:
+			results[i] = cStrToString(slice)
+
+		default:
+			return nil, errors.New("unsupported data type")
+		}
+
+		offset += stride
+	}
+
+	return results, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadInt32(address uintptr, count uint32, stride uint32) int32 {
+func (m *Memory) ReadInt8(address uintptr) (int8, error) {
 
-	// NYI:
-	return 0
-	//return m.readType(address, native.Memory._TYPE_INT32, 4, count, stride)
+	res, err := m.ReadTypes(address, MemTypeInt8, 1, 1, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(res) != 1 {
+		return 0, errors.New("not enough results for read type")
+	}
+
+	val, ok := res[0].(int8)
+	if !ok {
+		return 0, errors.New("failed to cast to the final type")
+	}
+
+	return val, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadInt64(address uintptr, count uint32, stride uint32) int64 {
+func (m *Memory) ReadInt8s(address uintptr, count, stride uint32) ([]int8, error) {
 
-	// NYI:
-	return 0
-	//return m.readType(address, native.Memory._TYPE_INT64, 8, count, stride)
+	res, err := m.ReadTypes(address, MemTypeInt8, 1, count, stride)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != int(count) {
+		return nil, errors.New("not enough results for read type")
+	}
+
+	out := make([]int8, count)
+	for i, v := range res {
+		val, ok := v.(int8)
+		if !ok {
+			return nil, errors.New("failed to cast to final type")
+		}
+
+		out[i] = val
+	}
+
+	return out, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadFloat32(address uintptr, count uint32, stride uint32) float32 {
+func (m *Memory) ReadInt16(address uintptr) (int16, error) {
 
-	// NYI:
-	return 0
-	//return m.readType(address, native.Memory._TYPE_FLOAT32, 4, count, stride)
+	res, err := m.ReadTypes(address, MemTypeInt16, 2, 1, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(res) != 1 {
+		return 0, errors.New("not enough results for read type")
+	}
+
+	val, ok := res[0].(int16)
+	if !ok {
+		return 0, errors.New("failed to cast to the final type")
+	}
+
+	return val, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadFloat64(address uintptr, count uint32, stride uint32) float64 {
+func (m *Memory) ReadInt16s(address uintptr, count, stride uint32) ([]int16, error) {
 
-	// NYI:
-	return 0
-	//return m.readType(address, native.Memory._TYPE_FLOAT64, 8, count, stride)
+	res, err := m.ReadTypes(address, MemTypeInt16, 2, count, stride)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != int(count) {
+		return nil, errors.New("not enough results for read type")
+	}
+
+	out := make([]int16, count)
+	for i, v := range res {
+		val, ok := v.(int16)
+		if !ok {
+			return nil, errors.New("failed to cast to final type")
+		}
+
+		out[i] = val
+	}
+
+	return out, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadPtr(address uintptr, count uint32, stride uint32) uintptr {
+func (m *Memory) ReadInt32(address uintptr) (int32, error) {
 
-	// NYI:
-	return 0
+	res, err := m.ReadTypes(address, MemTypeInt32, 4, 1, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(res) != 1 {
+		return 0, errors.New("not enough results for read type")
+	}
+
+	val, ok := res[0].(int32)
+	if !ok {
+		return 0, errors.New("failed to cast to the final type")
+	}
+
+	return val, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadInt32s(address uintptr, count, stride uint32) ([]int32, error) {
+
+	res, err := m.ReadTypes(address, MemTypeInt32, 4, count, stride)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != int(count) {
+		return nil, errors.New("not enough results for read type")
+	}
+
+	out := make([]int32, count)
+	for i, v := range res {
+		val, ok := v.(int32)
+		if !ok {
+			return nil, errors.New("failed to cast to final type")
+		}
+
+		out[i] = val
+	}
+
+	return out, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadInt64(address uintptr) (int64, error) {
+
+	res, err := m.ReadTypes(address, MemTypeInt64, 8, 1, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(res) != 1 {
+		return 0, errors.New("not enough results for read type")
+	}
+
+	val, ok := res[0].(int64)
+	if !ok {
+		return 0, errors.New("failed to cast to the final type")
+	}
+
+	return val, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadInt64s(address uintptr, count, stride uint32) ([]int64, error) {
+
+	res, err := m.ReadTypes(address, MemTypeInt64, 8, count, stride)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != int(count) {
+		return nil, errors.New("not enough results for read type")
+	}
+
+	out := make([]int64, count)
+	for i, v := range res {
+		val, ok := v.(int64)
+		if !ok {
+			return nil, errors.New("failed to cast to final type")
+		}
+
+		out[i] = val
+	}
+
+	return out, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadFloat32(address uintptr) (float32, error) {
+
+	res, err := m.ReadTypes(address, MemTypeFloat32, 4, 1, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(res) != 1 {
+		return 0, errors.New("not enough results for read type")
+	}
+
+	val, ok := res[0].(float32)
+	if !ok {
+		return 0, errors.New("failed to cast to the final type")
+	}
+
+	return val, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadFloat32s(address uintptr, count, stride uint32) ([]float32, error) {
+
+	res, err := m.ReadTypes(address, MemTypeFloat32, 4, count, stride)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != int(count) {
+		return nil, errors.New("not enough results for read type")
+	}
+
+	out := make([]float32, count)
+	for i, v := range res {
+		val, ok := v.(float32)
+		if !ok {
+			return nil, errors.New("failed to cast to final type")
+		}
+
+		out[i] = val
+	}
+
+	return out, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadFloat64(address uintptr) (float64, error) {
+
+	res, err := m.ReadTypes(address, MemTypeFloat64, 8, 1, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(res) != 1 {
+		return 0, errors.New("not enough results for read type")
+	}
+
+	val, ok := res[0].(float64)
+	if !ok {
+		return 0, errors.New("failed to cast to the final type")
+	}
+
+	return val, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadFloat64s(address uintptr, count, stride uint32) ([]float64, error) {
+
+	res, err := m.ReadTypes(address, MemTypeFloat64, 8, count, stride)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != int(count) {
+		return nil, errors.New("not enough results for read type")
+	}
+
+	out := make([]float64, count)
+	for i, v := range res {
+		val, ok := v.(float64)
+		if !ok {
+			return nil, errors.New("failed to cast to final type")
+		}
+
+		out[i] = val
+	}
+
+	return out, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadPtr(address uintptr) (uintptr, error) {
+
+	//----------------------------------------------------------------------------//
 
 	// If 64-bit process
-	/*if m.proc.is64Bit {
-		return m.readType(address, native.Memory._TYPE_INT64, 8, count, stride)
-	} else {
-		return m.readType(address, native.Memory._TYPE_INT32, 4, count, stride)
-	}*/
+	if m.proc.is64Bit {
+
+		res, err := m.ReadTypes(address, MemTypeInt64, 8, 1, 0)
+		if err != nil {
+			return 0, err
+		}
+
+		if len(res) != 1 {
+			return 0, errors.New("not enough results for read type")
+		}
+
+		val, ok := res[0].(int64)
+		if !ok {
+			return 0, errors.New("failed to cast to the final type")
+		}
+
+		return uintptr(val), nil
+	}
+
+	//----------------------------------------------------------------------------//
+
+	res, err := m.ReadTypes(address, MemTypeInt32, 4, 1, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(res) != 1 {
+		return 0, errors.New("not enough results for read type")
+	}
+
+	val, ok := res[0].(int32)
+	if !ok {
+		return 0, errors.New("failed to cast to the final type")
+	}
+
+	return uintptr(val), nil
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadBool(address uintptr, count uint32, stride uint32) bool {
+func (m *Memory) ReadPtrs(address uintptr, count, stride uint32) ([]uintptr, error) {
 
-	// NYI:
-	return false
-	//return m.readType(address, native.Memory._TYPE_BOOL, 1, count, stride)
+	//----------------------------------------------------------------------------//
+
+	// If 64-bit process
+	if m.proc.is64Bit {
+
+		res, err := m.ReadTypes(address, MemTypeInt64, 8, count, stride)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(res) != int(count) {
+			return nil, errors.New("not enough results for read type")
+		}
+
+		out := make([]uintptr, count)
+		for i, v := range res {
+			val, ok := v.(int64)
+			if !ok {
+				return nil, errors.New("failed to cast to final type")
+			}
+
+			out[i] = uintptr(val)
+		}
+
+		return out, nil
+	}
+
+	//----------------------------------------------------------------------------//
+
+	res, err := m.ReadTypes(address, MemTypeInt32, 4, count, stride)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != int(count) {
+		return nil, errors.New("not enough results for read type")
+	}
+
+	out := make([]uintptr, count)
+	for i, v := range res {
+		val, ok := v.(int32)
+		if !ok {
+			return nil, errors.New("failed to cast to final type")
+		}
+
+		out[i] = uintptr(val)
+	}
+
+	return out, nil
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadString(address uintptr, length uint32, count uint32, stride uint32) string {
+func (m *Memory) ReadBool(address uintptr) (bool, error) {
 
-	// NYI:
-	return ""
-	//return m.readType(address, native.Memory._TYPE_STRING, length, count, stride)
+	res, err := m.ReadTypes(address, MemTypeBool, 1, 1, 0)
+	if err != nil {
+		return false, err
+	}
+
+	if len(res) != 1 {
+		return false, errors.New("not enough results for read type")
+	}
+
+	val, ok := res[0].(bool)
+	if !ok {
+		return false, errors.New("failed to cast to the final type")
+	}
+
+	return val, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadBools(address uintptr, count, stride uint32) ([]bool, error) {
+
+	res, err := m.ReadTypes(address, MemTypeBool, 1, count, stride)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != int(count) {
+		return nil, errors.New("not enough results for read type")
+	}
+
+	out := make([]bool, count)
+	for i, v := range res {
+		val, ok := v.(bool)
+		if !ok {
+			return nil, errors.New("failed to cast to final type")
+		}
+
+		out[i] = val
+	}
+
+	return out, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadString(address uintptr, length uint32) (string, error) {
+
+	res, err := m.ReadTypes(address, MemTypeString, length, 1, 0)
+	if err != nil {
+		return "", err
+	}
+
+	if len(res) != 1 {
+		return "", errors.New("not enough results for read type")
+	}
+
+	val, ok := res[0].(string)
+	if !ok {
+		return "", errors.New("failed to cast to the final type")
+	}
+
+	return val, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) ReadStrings(address uintptr, length, count, stride uint32) ([]string, error) {
+
+	res, err := m.ReadTypes(address, MemTypeString, length, count, stride)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(res) != int(count) {
+		return nil, errors.New("not enough results for read type")
+	}
+
+	out := make([]string, count)
+	for i, v := range res {
+		val, ok := v.(string)
+		if !ok {
+			return nil, errors.New("failed to cast to final type")
+		}
+
+		out[i] = val
+	}
+
+	return out, nil
 }
