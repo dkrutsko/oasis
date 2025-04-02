@@ -18,3 +18,11 @@ Thumbs.db
 *.sublime-workspace
 *.sublime-settings
 ideas.txt
+
+# View
+.svelte-kit
+node_modules
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+server/content/*
+!server/content/.gitkeep
