@@ -87,11 +87,8 @@ mkdir -p "${_dir}"
 printf -- "\n\e[1;32mBuilding Windows binary\e[0m\n"
 make publish
 
-printf -- "\n\e[1;32mCopying binary to host\e[0m\n"
-cp "./bin/oasis.exe" "${_dir}/oasis.exe"
-
 printf -- "\n\e[1;32mCopying runtime to host\e[0m\n"
-cp -r ./static/* "${_dir}"
+cp -r ./bin/* "${_dir}"
 
 ##----------------------------------------------------------------------------##
 

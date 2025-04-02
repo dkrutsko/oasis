@@ -1,9 +1,10 @@
 # Generic
+!.gitkeep
 .DS_Store
+Thumbs.db
 
 # Bin
 /bin/
-/static/
 
 # Logs
 *.log

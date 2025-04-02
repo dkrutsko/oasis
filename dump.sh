@@ -60,10 +60,13 @@ pushd "$(dirname "$0")" > /dev/null
 ##----------------------------------------------------------------------------##
 
 printf -- "\n\e[1;32mEnsuring output directory\e[0m\n"
-mkdir -p "./static"
+mkdir -p "./bin"
 
 printf -- "\n\e[1;32mDownloading offsets.json\e[0m\n"
-curl -sSL -o "./static/offsets.json" "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.json"
+curl -sSL -o "./bin/offsets.json" "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/offsets.json"
+
+printf -- "\n\e[1;32mDownloading client_dll.json\e[0m\n"
+curl -sSL -o "./bin/client_dll.json" "https://raw.githubusercontent.com/a2x/cs2-dumper/main/output/client_dll.json"
 
 ##----------------------------------------------------------------------------##
 
