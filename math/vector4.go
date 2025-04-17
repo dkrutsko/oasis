@@ -1,9 +1,14 @@
 package math
 
 import (
+	"errors"
 	"fmt"
 	sysMath "math"
 )
+
+//----------------------------------------------------------------------------//
+// Constants                                                                  //
+//----------------------------------------------------------------------------//
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -16,6 +21,10 @@ var (
 	Vector4Identity = Vector4{0, 0, 0, 1}
 )
 
+//----------------------------------------------------------------------------//
+// Types                                                                      //
+//----------------------------------------------------------------------------//
+
 ////////////////////////////////////////////////////////////////////////////////
 
 type Vector4 struct {
@@ -25,11 +34,22 @@ type Vector4 struct {
 	W float64
 }
 
+//----------------------------------------------------------------------------//
+// Methods                                                                    //
+//----------------------------------------------------------------------------//
+
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector4) String() string {
 
 	return fmt.Sprintf("[%.2f, %.2f, %.2f, %.2f]", v.X, v.Y, v.Z, v.W)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) IsZero() bool {
+
+	return v.X == 0 && v.Y == 0 && v.Z == 0 && v.W == 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -98,6 +118,70 @@ func (v Vector4) LengthSq() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (v Vector4) ToSlice32() []float32 {
+
+	return []float32{
+		float32(v.X),
+		float32(v.Y),
+		float32(v.Z),
+		float32(v.W),
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) ToSlice64() []float64 {
+
+	return []float64{
+		v.X,
+		v.Y,
+		v.Z,
+		v.W,
+	}
+}
+
+//----------------------------------------------------------------------------//
+// Static                                                                     //
+//----------------------------------------------------------------------------//
+
+////////////////////////////////////////////////////////////////////////////////
+
+func Vector4FromSlice32(values []float32) (Vector4, error) {
+
+	if len(values) != 4 {
+		return Vector4Zero, errors.New("not enough values")
+	}
+
+	v := Vector4{
+		X: float64(values[0]),
+		Y: float64(values[1]),
+		Z: float64(values[2]),
+		W: float64(values[3]),
+	}
+
+	return v, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func Vector4FromSlice64(values []float64) (Vector4, error) {
+
+	if len(values) != 4 {
+		return Vector4Zero, errors.New("not enough values")
+	}
+
+	v := Vector4{
+		X: values[0],
+		Y: values[1],
+		Z: values[2],
+		W: values[3],
+	}
+
+	return v, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func Vector4TransformVector2(matrix Matrix, value Vector2) Vector4 {
 
 	return Vector4{
@@ -152,6 +236,10 @@ func Vector4FromPacked(packed int64) Vector4 {
 
 	return Vector4{x, y, z, w}
 }
+
+//----------------------------------------------------------------------------//
+// Operators                                                                  //
+//----------------------------------------------------------------------------//
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -299,113 +387,25 @@ func (v Vector4) Compare(value Vector4) int {
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector4) Lt(value Vector4) bool {
-
-	if v.X < value.X {
-		return true
-	}
-	if v.X > value.X {
-		return false
-	}
-
-	if v.Y < value.Y {
-		return true
-	}
-	if v.Y > value.Y {
-		return false
-	}
-
-	if v.Z < value.Z {
-		return true
-	}
-	if v.Z > value.Z {
-		return false
-	}
-
-	return v.W < value.W
+	return v.Compare(value) < 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector4) Gt(value Vector4) bool {
-
-	if v.X > value.X {
-		return true
-	}
-	if v.X < value.X {
-		return false
-	}
-
-	if v.Y > value.Y {
-		return true
-	}
-	if v.Y < value.Y {
-		return false
-	}
-
-	if v.Z > value.Z {
-		return true
-	}
-	if v.Z < value.Z {
-		return false
-	}
-
-	return v.W > value.W
+	return v.Compare(value) > 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector4) Le(value Vector4) bool {
-
-	if v.X < value.X {
-		return true
-	}
-	if v.X > value.X {
-		return false
-	}
-
-	if v.Y < value.Y {
-		return true
-	}
-	if v.Y > value.Y {
-		return false
-	}
-
-	if v.Z < value.Z {
-		return true
-	}
-	if v.Z > value.Z {
-		return false
-	}
-
-	return v.W <= value.W
+	return v.Compare(value) <= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector4) Ge(value Vector4) bool {
-
-	if v.X > value.X {
-		return true
-	}
-	if v.X < value.X {
-		return false
-	}
-
-	if v.Y > value.Y {
-		return true
-	}
-	if v.Y < value.Y {
-		return false
-	}
-
-	if v.Z > value.Z {
-		return true
-	}
-	if v.Z < value.Z {
-		return false
-	}
-
-	return v.W >= value.W
+	return v.Compare(value) >= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////

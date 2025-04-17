@@ -1,9 +1,14 @@
 package math
 
 import (
+	"errors"
 	"fmt"
 	sysMath "math"
 )
+
+//----------------------------------------------------------------------------//
+// Constants                                                                  //
+//----------------------------------------------------------------------------//
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -14,6 +19,10 @@ var (
 	Vector3UnitZ = Vector3{0, 0, 1}
 )
 
+//----------------------------------------------------------------------------//
+// Types                                                                      //
+//----------------------------------------------------------------------------//
+
 ////////////////////////////////////////////////////////////////////////////////
 
 type Vector3 struct {
@@ -22,11 +31,22 @@ type Vector3 struct {
 	Z float64
 }
 
+//----------------------------------------------------------------------------//
+// Methods                                                                    //
+//----------------------------------------------------------------------------//
+
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector3) String() string {
 
 	return fmt.Sprintf("[%.2f, %.2f, %.2f]", v.X, v.Y, v.Z)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) IsZero() bool {
+
+	return v.X == 0 && v.Y == 0 && v.Z == 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -131,6 +151,66 @@ func (v Vector3) LengthSq() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (v Vector3) ToSlice32() []float32 {
+
+	return []float32{
+		float32(v.X),
+		float32(v.Y),
+		float32(v.Z),
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) ToSlice64() []float64 {
+
+	return []float64{
+		v.X,
+		v.Y,
+		v.Z,
+	}
+}
+
+//----------------------------------------------------------------------------//
+// Static                                                                     //
+//----------------------------------------------------------------------------//
+
+////////////////////////////////////////////////////////////////////////////////
+
+func Vector3FromSlice32(values []float32) (Vector3, error) {
+
+	if len(values) != 3 {
+		return Vector3Zero, errors.New("not enough values")
+	}
+
+	v := Vector3{
+		X: float64(values[0]),
+		Y: float64(values[1]),
+		Z: float64(values[2]),
+	}
+
+	return v, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func Vector3FromSlice64(values []float64) (Vector3, error) {
+
+	if len(values) != 3 {
+		return Vector3Zero, errors.New("not enough values")
+	}
+
+	v := Vector3{
+		X: values[0],
+		Y: values[1],
+		Z: values[2],
+	}
+
+	return v, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func Vector3TransformVector2(matrix Matrix, value Vector2) Vector3 {
 
 	return Vector3{
@@ -161,6 +241,10 @@ func Vector3TransformVector4(matrix Matrix, value Vector4) Vector3 {
 		matrix.M13*value.X + matrix.M23*value.Y + matrix.M33*value.Z + matrix.M43*value.W,
 	}
 }
+
+//----------------------------------------------------------------------------//
+// Operators                                                                  //
+//----------------------------------------------------------------------------//
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -292,85 +376,25 @@ func (v Vector3) Compare(value Vector3) int {
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector3) Lt(value Vector3) bool {
-
-	if v.X < value.X {
-		return true
-	}
-	if v.X > value.X {
-		return false
-	}
-
-	if v.Y < value.Y {
-		return true
-	}
-	if v.Y > value.Y {
-		return false
-	}
-
-	return v.Z < value.Z
+	return v.Compare(value) < 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector3) Gt(value Vector3) bool {
-
-	if v.X > value.X {
-		return true
-	}
-	if v.X < value.X {
-		return false
-	}
-
-	if v.Y > value.Y {
-		return true
-	}
-	if v.Y < value.Y {
-		return false
-	}
-
-	return v.Z > value.Z
+	return v.Compare(value) > 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector3) Le(value Vector3) bool {
-
-	if v.X < value.X {
-		return true
-	}
-	if v.X > value.X {
-		return false
-	}
-
-	if v.Y < value.Y {
-		return true
-	}
-	if v.Y > value.Y {
-		return false
-	}
-
-	return v.Z <= value.Z
+	return v.Compare(value) <= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 func (v Vector3) Ge(value Vector3) bool {
-
-	if v.X > value.X {
-		return true
-	}
-	if v.X < value.X {
-		return false
-	}
-
-	if v.Y > value.Y {
-		return true
-	}
-	if v.Y < value.Y {
-		return false
-	}
-
-	return v.Z >= value.Z
+	return v.Compare(value) >= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////

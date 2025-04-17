@@ -1,9 +1,14 @@
 package math
 
 import (
+	"errors"
 	"fmt"
 	sysMath "math"
 )
+
+//----------------------------------------------------------------------------//
+// Constants                                                                  //
+//----------------------------------------------------------------------------//
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -11,6 +16,10 @@ var (
 	MatrixZero     = Matrix{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	MatrixIdentity = Matrix{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
 )
+
+//----------------------------------------------------------------------------//
+// Types                                                                      //
+//----------------------------------------------------------------------------//
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -20,6 +29,10 @@ type Matrix struct {
 	M31, M32, M33, M34 float64
 	M41, M42, M43, M44 float64
 }
+
+//----------------------------------------------------------------------------//
+// Methods                                                                    //
+//----------------------------------------------------------------------------//
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -37,6 +50,31 @@ func (m Matrix) String() string {
 		m.M31, m.M32, m.M33, m.M34,
 		m.M41, m.M42, m.M43, m.M44,
 	)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) IsZero() bool {
+
+	return m.M11 == 0 &&
+		m.M12 == 0 &&
+		m.M13 == 0 &&
+		m.M14 == 0 &&
+
+		m.M21 == 0 &&
+		m.M22 == 0 &&
+		m.M23 == 0 &&
+		m.M24 == 0 &&
+
+		m.M31 == 0 &&
+		m.M32 == 0 &&
+		m.M33 == 0 &&
+		m.M34 == 0 &&
+
+		m.M41 == 0 &&
+		m.M42 == 0 &&
+		m.M43 == 0 &&
+		m.M44 == 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -116,6 +154,70 @@ func (m Matrix) Determinant() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (m Matrix) ToSlice32() []float32 {
+
+	return []float32{
+		float32(m.M11), float32(m.M12), float32(m.M13), float32(m.M14),
+		float32(m.M21), float32(m.M22), float32(m.M23), float32(m.M24),
+		float32(m.M31), float32(m.M32), float32(m.M33), float32(m.M34),
+		float32(m.M41), float32(m.M42), float32(m.M43), float32(m.M44),
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) ToSlice64() []float64 {
+
+	return []float64{
+		m.M11, m.M12, m.M13, m.M14,
+		m.M21, m.M22, m.M23, m.M24,
+		m.M31, m.M32, m.M33, m.M34,
+		m.M41, m.M42, m.M43, m.M44,
+	}
+}
+
+//----------------------------------------------------------------------------//
+// Static                                                                     //
+//----------------------------------------------------------------------------//
+
+////////////////////////////////////////////////////////////////////////////////
+
+func MatrixFromSlice32(values []float32) (Matrix, error) {
+
+	if len(values) != 16 {
+		return MatrixZero, errors.New("not enough values")
+	}
+
+	m := Matrix{
+		float64(values[0]),  float64(values[1]),  float64(values[2]),  float64(values[3]),
+		float64(values[4]),  float64(values[5]),  float64(values[6]),  float64(values[7]),
+		float64(values[8]),  float64(values[9]),  float64(values[10]), float64(values[11]),
+		float64(values[12]), float64(values[13]), float64(values[14]), float64(values[15]),
+	}
+
+	return m, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func MatrixFromSlice64(values []float64) (Matrix, error) {
+
+	if len(values) != 16 {
+		return MatrixZero, errors.New("not enough values")
+	}
+
+	m := Matrix{
+		values[0],  values[1],  values[2],  values[3],
+		values[4],  values[5],  values[6],  values[7],
+		values[8],  values[9],  values[10], values[11],
+		values[12], values[13], values[14], values[15],
+	}
+
+	return m, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func MatrixCreateProj(fov float64, width, height int, near, far float64) Matrix {
 
 	// Do parameter check
@@ -168,25 +270,23 @@ func MatrixProject(pos Vector3, width, height int, model, view, proj Matrix) Vec
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func MatrixProjectWithMvp(pos Vector3, width, height int, mvp Matrix) Vector3 {
+func MatrixProjectWithMVP(pos Vector3, width, height int, mvp Matrix) Vector3 {
 
 	const minZ = 0.0
 	const maxZ = 1.0
 
 	transform := Vector4TransformVector3(mvp, pos)
 
-	result := Vector3{
-		transform.X / transform.W,
-		transform.Y / transform.W,
-		transform.Z / transform.W,
+	return Vector3{
+		(1 + transform.X / transform.W) * float64(width) * 0.5,
+		(1 - transform.Y / transform.W) * float64(height) * 0.5,
+		minZ + (transform.Z / transform.W) * (maxZ - minZ),
 	}
-
-	result.X = (1 + result.X) * float64(width) * 0.5
-	result.Y = (1 - result.Y) * float64(height) * 0.5
-	result.Z = minZ + result.Z*(maxZ-minZ)
-
-	return result
 }
+
+//----------------------------------------------------------------------------//
+// Operators                                                                  //
+//----------------------------------------------------------------------------//
 
 ////////////////////////////////////////////////////////////////////////////////
 
