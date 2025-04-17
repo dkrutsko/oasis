@@ -270,7 +270,7 @@ func MatrixProject(pos Vector3, width, height int, model, view, proj Matrix) Vec
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func MatrixProjectWithMVP(pos Vector3, width, height int, mvp Matrix) Vector3 {
+func MatrixProjectWithMvp(pos Vector3, width, height int, mvp Matrix) Vector3 {
 
 	const minZ = 0.0
 	const maxZ = 1.0

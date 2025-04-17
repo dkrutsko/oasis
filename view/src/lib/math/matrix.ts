@@ -424,12 +424,12 @@ export class Matrix {
 		proj: Matrix,
 	): Vector3 {
 
-		return Matrix.projectWithMVP(pos, width, height, model.mul(view).mul(proj));
+		return Matrix.projectWithMvp(pos, width, height, model.mul(view).mul(proj));
 	}
 
 	////////////////////////////////////////////////////////////////////////////////
 
-	public static projectWithMVP(
+	public static projectWithMvp(
 		pos: Vector3,
 		width: number,
 		height: number,
