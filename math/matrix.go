@@ -393,9 +393,9 @@ func MatrixFromSlice64(values []float64) (Matrix, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// MatrixCreateProj creates a perspective projection matrix from the given
+// MatrixCreateProjection creates a perspective projection matrix from the given
 // field of view, viewport dimensions, and near/far clipping planes.
-func MatrixCreateProj(fov float64, width, height int, near, far float64) Matrix {
+func MatrixCreateProjection(fov float64, width, height int, near, far float64) Matrix {
 
 	// Do parameter check
 	if fov <= 0 || fov >= sysMath.Pi || near <= 0 || far <= 0 || near >= far {
@@ -422,6 +422,29 @@ func MatrixCreateProj(fov float64, width, height int, near, far float64) Matrix 
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateOrthographic creates an orthographic projection matrix from the
+// given viewport dimensions and near/far clipping planes.
+func MatrixCreateOrthographic(width, height int, near, far float64) Matrix {
+
+	w := float64(width)
+	h := float64(height)
+
+	dif := near - far
+	m11 := 2 / w
+	m22 := 2 / h
+	m33 := 1 / dif
+	m43 := near / dif
+
+	return Matrix{
+		m11, 0.0, 0.0, 0.0,
+		0.0, m22, 0.0, 0.0,
+		0.0, 0.0, m33, 0.0,
+		0.0, 0.0, m43, 1.0,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // MatrixCreateView creates a view matrix from the camera position, target,
 // and up direction.
 func MatrixCreateView(pos, target, up Vector3) Matrix {
@@ -437,6 +460,24 @@ func MatrixCreateView(pos, target, up Vector3) Matrix {
 		-vx.Dot(pos),
 		-vy.Dot(pos),
 		-vz.Dot(pos), 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// MatrixCreateWorld creates a world transformation matrix from a position,
+// forward direction, and up direction.
+func MatrixCreateWorld(pos, forward, up Vector3) Matrix {
+
+	vz := forward.Neg().Normalize()
+	vx := up.Cross(vz).Normalize()
+	vy := vz.Cross(vx).Normalize()
+
+	return Matrix{
+		vx.X, vx.Y, vx.Z, 0,
+		vy.X, vy.Y, vy.Z, 0,
+		vz.X, vz.Y, vz.Z, 0,
+		pos.X, pos.Y, pos.Z, 1,
 	}
 }
 
