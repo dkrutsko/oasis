@@ -27,9 +27,6 @@ var (
 
 	// Vector4UnitW represents a unit vector along the w-axis.
 	Vector4UnitW = Vector4{0, 0, 0, 1}
-
-	// Vector4Identity represents an identity quaternion.
-	Vector4Identity = Vector4{0, 0, 0, 1}
 )
 
 //----------------------------------------------------------------------------//
@@ -390,31 +387,6 @@ func Vector4TransformVector4(matrix Matrix, value Vector4) Vector4 {
 		matrix.M13*value.X + matrix.M23*value.Y + matrix.M33*value.Z + matrix.M43*value.W,
 		matrix.M14*value.X + matrix.M24*value.Y + matrix.M34*value.Z + matrix.M44*value.W,
 	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Vector4FromPacked decompresses a packed 64-bit quaternion into its four
-// components. The packed format stores x in the upper 22 bits and y and z in
-// 21 bits each. The w component is reconstructed from the unit quaternion
-// constraint.
-func Vector4FromPacked(packed int64) Vector4 {
-
-	const a = 1 / 2097152.0
-	const b = 1 / 1048576.0
-
-	x := float64((packed<<0)>>42) * a
-	y := float64((packed<<22)>>43) * b
-	z := float64((packed<<43)>>43) * b
-
-	wSquared := x*x + y*y + z*z
-
-	w := 0.0
-	if wSquared < 1 && sysMath.Abs(wSquared-1) >= b {
-		w = sysMath.Sqrt(1 - wSquared)
-	}
-
-	return Vector4{x, y, z, w}
 }
 
 //----------------------------------------------------------------------------//
