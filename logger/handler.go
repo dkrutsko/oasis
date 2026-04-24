@@ -13,6 +13,7 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ColorWriter is a custom writer that adds color to the output.
 type ColorWriter struct {
 	w     *os.File
 	color *color.Color
@@ -26,12 +27,15 @@ func (cw *ColorWriter) Write(p []byte) (n int, err error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// LogHandler is a custom slog handler that routes log messages to different
+// loggers based on their severity level. It embeds `slog.Handler` and defines
+// loggers for different severity levels like `Dbg`, `Info`, `Warn`, and `Err`.
 type LogHandler struct {
 	slog.Handler
-	Debug *log.Logger
-	Info  *log.Logger
-	Warn  *log.Logger
-	Error *log.Logger
+	Dbg  *log.Logger
+	Info *log.Logger
+	Warn *log.Logger
+	Err  *log.Logger
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -82,7 +86,7 @@ func (log *LogHandler) prependSrc(a slog.Attr, result *[]string) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (log *LogHandler) formatInner(v slog.Value) string {
+func (log *LogHandler) formatInner(v slog.Value, indent string) string {
 
 	// Try parsing value as a group
 	if v.Kind() == slog.KindGroup {
@@ -95,11 +99,11 @@ func (log *LogHandler) formatInner(v slog.Value) string {
 			if !log.prependSrc(a, &result) {
 
 				// Format other attributes recursively with same filtering
-				result = append(result, a.Key+"="+log.formatInner(a.Value))
+				result = append(result, a.Key+"="+log.formatInner(a.Value, indent+"  "))
 			}
 		}
 
-		return "[" + strings.Join(result, " ") + "]"
+		return fmt.Sprintf("[\n%s  %s\n%s]", indent, strings.Join(result, " "), indent)
 	}
 
 	// Try parsing value as a string
@@ -125,7 +129,7 @@ func (log *LogHandler) formatMessage(r slog.Record) string {
 		if !log.prependSrc(a, &result) {
 
 			// Format the other attributes and filter out extra metadata
-			result = append(result, a.Key+"="+log.formatInner(a.Value))
+			result = append(result, a.Key+"="+log.formatInner(a.Value, ""))
 		}
 
 		return true
@@ -148,7 +152,7 @@ func (log *LogHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	switch r.Level {
 	case slog.LevelDebug:
-		log.Debug.Println(msg)
+		log.Dbg.Println(msg)
 
 	case slog.LevelInfo:
 		log.Info.Println(msg)
@@ -157,7 +161,7 @@ func (log *LogHandler) Handle(ctx context.Context, r slog.Record) error {
 		log.Warn.Println(msg)
 
 	case slog.LevelError:
-		log.Error.Println(msg)
+		log.Err.Println(msg)
 	}
 
 	return nil

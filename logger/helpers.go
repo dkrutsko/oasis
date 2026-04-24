@@ -8,6 +8,7 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Bool returns an `Attr` for a bool.
 func Bool(key string, val bool) slog.Attr {
 
 	return slog.Attr{
@@ -18,6 +19,7 @@ func Bool(key string, val bool) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Int converts an int to an int64 and returns an `Attr`.
 func Int(key string, val int) slog.Attr {
 
 	v := int64(val)
@@ -29,6 +31,7 @@ func Int(key string, val int) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Int8 converts an int8 to an int64 and returns an `Attr`.
 func Int8(key string, val int8) slog.Attr {
 
 	v := int64(val)
@@ -40,6 +43,7 @@ func Int8(key string, val int8) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Int16 converts an int16 to an int64 and returns an `Attr`.
 func Int16(key string, val int16) slog.Attr {
 
 	v := int64(val)
@@ -51,6 +55,7 @@ func Int16(key string, val int16) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Int32 converts an int32 to an int64 and returns an `Attr`.
 func Int32(key string, val int32) slog.Attr {
 
 	v := int64(val)
@@ -62,6 +67,7 @@ func Int32(key string, val int32) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Int64 returns an `Attr` for an int64.
 func Int64(key string, val int64) slog.Attr {
 
 	return slog.Attr{
@@ -72,6 +78,7 @@ func Int64(key string, val int64) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Byte converts a byte to a uint64 and returns an `Attr`.
 func Byte(key string, val byte) slog.Attr {
 
 	v := uint64(val)
@@ -83,6 +90,7 @@ func Byte(key string, val byte) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Uint converts a uint to a uint64 and returns an `Attr`.
 func Uint(key string, val uint) slog.Attr {
 
 	v := uint64(val)
@@ -94,6 +102,7 @@ func Uint(key string, val uint) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Uint8 converts a uint8 to a uint64 and returns an `Attr`.
 func Uint8(key string, val uint8) slog.Attr {
 
 	v := uint64(val)
@@ -105,6 +114,7 @@ func Uint8(key string, val uint8) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Uint16 converts a uint16 to a uint64 and returns an `Attr`.
 func Uint16(key string, val uint16) slog.Attr {
 
 	v := uint64(val)
@@ -116,6 +126,7 @@ func Uint16(key string, val uint16) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Uint32 converts a uint32 to a uint64 and returns an `Attr`.
 func Uint32(key string, val uint32) slog.Attr {
 
 	v := uint64(val)
@@ -127,6 +138,7 @@ func Uint32(key string, val uint32) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Uint64 returns an `Attr` for a uint64.
 func Uint64(key string, val uint64) slog.Attr {
 
 	return slog.Attr{
@@ -137,6 +149,7 @@ func Uint64(key string, val uint64) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Uintptr converts a uintptr to a uint64 and returns an `Attr`.
 func Uintptr(key string, val uintptr) slog.Attr {
 
 	v := uint64(val)
@@ -148,6 +161,7 @@ func Uintptr(key string, val uintptr) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Float32 converts a float32 to a float64 and returns an `Attr`.
 func Float32(key string, val float32) slog.Attr {
 
 	v := float64(val)
@@ -159,6 +173,7 @@ func Float32(key string, val float32) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Float64 returns an `Attr` for a float64.
 func Float64(key string, val float64) slog.Attr {
 
 	return slog.Attr{
@@ -169,6 +184,7 @@ func Float64(key string, val float64) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// String returns an `Attr` for a string.
 func String(key string, val string) slog.Attr {
 
 	return slog.Attr{
@@ -179,6 +195,7 @@ func String(key string, val string) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Rune converts a rune to a string and returns an `Attr`.
 func Rune(key string, val rune) slog.Attr {
 
 	v := string(val)
@@ -190,6 +207,7 @@ func Rune(key string, val rune) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Time returns an `Attr` for a `time.Time`. It discards the monotonic portion.
 func Time(key string, val time.Time) slog.Attr {
 
 	return slog.Attr{
@@ -200,6 +218,7 @@ func Time(key string, val time.Time) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Duration returns an `Attr` for a `time.Duration`.
 func Duration(key string, val time.Duration) slog.Attr {
 
 	return slog.Attr{
@@ -210,6 +229,8 @@ func Duration(key string, val time.Duration) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Elapsed returns an `Attr` for the time elapsed since `val` in a
+// formatted way.
 func Elapsed(key string, val time.Time) slog.Attr {
 
 	// Calculate elapsed time
@@ -227,7 +248,7 @@ func expandError(err error) slog.Value {
 
 	//----------------------------------------------------------------------------//
 
-	// Empty string
+	// Nil error
 	if err == nil {
 		return slog.AnyValue(nil)
 	}
@@ -341,6 +362,9 @@ func expandError(err error) slog.Value {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Error returns an `Attr` for an error. If the error is wrapped, it will log
+// both the outer error message and the wrapped error message recursively.
+// If the error is nil, the `Attr` will have a nil value.
 func Error(key string, err error) slog.Attr {
 
 	return slog.Attr{
@@ -351,6 +375,7 @@ func Error(key string, err error) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Any returns an `Attr` for the supplied value.
 func Any(key string, val any) slog.Attr {
 
 	return slog.Attr{
@@ -361,6 +386,9 @@ func Any(key string, val any) slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Group returns an `Attr` for a group. Use `Group` to collect several
+// key-value pairs under a single key on a log line, or as the result of
+// `LogValue` to log a single value as multiple `Attr` values.
 func Group(key string, args ...slog.Attr) slog.Attr {
 
 	return slog.Attr{
@@ -377,6 +405,7 @@ type skipFrames struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SkipFrames returns a special `Attr` for skipping stack frames during output.
 func SkipFrames(n int) slog.Attr {
 
 	v := skipFrames{n}

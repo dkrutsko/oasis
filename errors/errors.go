@@ -4,8 +4,7 @@ import (
 	sysErrors "errors"
 	"log/slog"
 	"path/filepath"
-
-	"github.com/go-stack/stack"
+	"runtime"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -13,7 +12,7 @@ import (
 type structuredError struct {
 	msg   string
 	attrs []slog.Attr
-	stack stack.CallStack
+	stack []runtime.Frame
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -42,14 +41,12 @@ func New(msg string, attrs ...slog.Attr) error {
 		}
 	}
 
-	// Retrieve call stack
-	trace := stack.Trace()
-
+	trace := trace()
 	// Check frame count
 	if len(trace) > skip {
 
-		// Retrieve the stack frame
-		frame := trace[skip].Frame()
+		// Grab stack frame
+		frame := trace[skip]
 
 		// Extract just the file name
 		fileName := filepath.Base(frame.File)
@@ -125,17 +122,17 @@ func Attributes(err error) []slog.Attr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (e *structuredError) StackTrace() stack.CallStack {
+func (e *structuredError) StackTrace() []runtime.Frame {
 	return e.stack
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func StackTrace(err error) stack.CallStack {
+func StackTrace(err error) []runtime.Frame {
 
 	// If has required method
 	u, ok := err.(interface {
-		StackTrace() stack.CallStack
+		StackTrace() []runtime.Frame
 	})
 
 	if !ok {
@@ -184,4 +181,31 @@ func Is(err, target error) bool {
 
 func As(err error, target any) bool {
 	return sysErrors.As(err, target)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func trace() []runtime.Frame {
+
+	var pcs [512]uintptr
+	// Retrieve current call stack
+	// Exclude the runtime.Callers
+	n := runtime.Callers(1, pcs[:])
+
+	// Convert program counters into frames
+	frames := runtime.CallersFrames(pcs[:n])
+	result := make([]runtime.Frame, 0, n)
+
+	// Skip extra frame retrieved just to
+	// make sure runtime.sigpanic special
+	// case is handled
+	frame, more := frames.Next()
+
+	for more {
+		// Retrieve the next frame
+		frame, more = frames.Next()
+		result = append(result, frame)
+	}
+
+	return result
 }

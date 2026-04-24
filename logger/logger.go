@@ -9,69 +9,114 @@ import (
 	"runtime"
 	"sync"
 	"time"
-
-	"github.com/fatih/color"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 
 var (
-	instance     *slog.Logger
-	instanceLock sync.RWMutex
+	instances     = make(map[string]*Logger)
+	instancesLock sync.RWMutex
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func New(level slog.Level, outputJson bool) *slog.Logger {
+// Logger wraps `slog.Logger` with additional metadata and functions.
+type Logger struct {
+	*slog.Logger
+	level slog.Level
+	json  bool
+}
 
-	options := &slog.HandlerOptions{
-		Level: level,
+////////////////////////////////////////////////////////////////////////////////
+
+// GetLevel returns the minimum log level configured for this logger.
+func (l *Logger) GetLevel() slog.Level {
+	return l.level
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// IsJson returns whether this logger is configured to output JSON.
+func (l *Logger) IsJson() bool {
+	return l.json
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetHandler returns the underlying `LogHandler` for this logger.
+func (l *Logger) GetHandler() *LogHandler {
+	return l.Handler().(*LogHandler)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// New creates a new `slog.Logger` from the provided options. The returned
+// logger routes messages to the configured writers with color-coded output
+// per level. If the JSON option is enabled, output is passed to the default
+// JSON handler instead.
+func New(opts *Options) *Logger {
+
+	handlerOpts := &slog.HandlerOptions{
+		Level: opts.Level,
 	}
 
 	var handler slog.Handler
-	if outputJson {
-		handler = slog.NewJSONHandler(os.Stdout, options)
+	if opts.Json {
+		handler = slog.NewJSONHandler(os.Stdout, handlerOpts)
 	} else {
-		handler = slog.NewTextHandler(os.Stdout, options)
+		handler = slog.NewTextHandler(os.Stdout, handlerOpts)
 	}
 
-	cwDebug := &ColorWriter{w: os.Stdout, color: color.New(color.FgHiBlack)}
-	cwInfo := &ColorWriter{w: os.Stdout, color: color.New()}
-	cwWarn := &ColorWriter{w: os.Stderr, color: color.New(color.FgYellow)}
-	cwError := &ColorWriter{w: os.Stderr, color: color.New(color.FgRed)}
+	cwDbg := &ColorWriter{w: opts.Dbg.Writer, color: opts.Dbg.Color}
+	cwInfo := &ColorWriter{w: opts.Info.Writer, color: opts.Info.Color}
+	cwWarn := &ColorWriter{w: opts.Warn.Writer, color: opts.Warn.Color}
+	cwErr := &ColorWriter{w: opts.Err.Writer, color: opts.Err.Color}
 
-	result := slog.New(&LogHandler{
-		Handler: handler,
-
-		Debug: log.New(cwDebug, "", 0),
-		Info:  log.New(cwInfo, "", 0),
-		Warn:  log.New(cwWarn, "", 0),
-		Error: log.New(cwError, "", 0),
-	})
-
-	return result
+	return &Logger{
+		level: opts.Level,
+		json:  opts.Json,
+		Logger: slog.New(
+			&LogHandler{
+				Handler: handler,
+				Dbg:     log.New(cwDbg, opts.Dbg.Prefix, 0),
+				Info:    log.New(cwInfo, opts.Info.Prefix, 0),
+				Warn:    log.New(cwWarn, opts.Warn.Prefix, 0),
+				Err:     log.New(cwErr, opts.Err.Prefix, 0),
+			},
+		),
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func GetLogger() *slog.Logger {
+// GetLogger gets the `Logger` registered under the given key. Returns nil
+// if no logger is registered with that key.
+func GetLogger(key string) *Logger {
 
 	// Lock when reading
-	instanceLock.RLock()
-	defer instanceLock.RUnlock()
+	instancesLock.RLock()
+	defer instancesLock.RUnlock()
 
-	return instance
+	return instances[key]
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func SetLogger(l *slog.Logger) {
+// SetLogger registers a `Logger` under the given key. If the logger is nil,
+// the key is removed. All registered loggers receive log messages
+// independently.
+func SetLogger(key string, l *Logger) {
 
 	// Lock when setting
-	instanceLock.Lock()
-	defer instanceLock.Unlock()
+	instancesLock.Lock()
+	defer instancesLock.Unlock()
 
-	instance = l
+	if l == nil {
+		// Delete the instance
+		delete(instances, key)
+	} else {
+		instances[key] = l
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -79,11 +124,11 @@ func SetLogger(l *slog.Logger) {
 func internalLog(ctx context.Context, level slog.Level, msg string, attrs ...slog.Attr) {
 
 	// Lock when reading
-	instanceLock.RLock()
-	defer instanceLock.RUnlock()
+	instancesLock.RLock()
+	defer instancesLock.RUnlock()
 
-	// If instance exists
-	if instance == nil {
+	// Nothing to log to
+	if len(instances) == 0 {
 		return
 	}
 
@@ -133,60 +178,72 @@ func internalLog(ctx context.Context, level slog.Level, msg string, attrs ...slo
 		}
 	}
 
-	// Pass to the parent LogAttrs with source
-	instance.LogAttrs(ctx, level, msg, res...)
+	// Log to all registered loggers
+	for _, inst := range instances {
+		inst.LogAttrs(ctx, level, msg, res...)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Dbg logs at `slog.LevelDebug`.
 func Dbg(msg string, attrs ...slog.Attr) {
 	internalLog(context.Background(), slog.LevelDebug, msg, attrs...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// DbgContext logs at `slog.LevelDebug` with the given context.
 func DbgContext(ctx context.Context, msg string, attrs ...slog.Attr) {
 	internalLog(ctx, slog.LevelDebug, msg, attrs...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Info logs at `slog.LevelInfo`.
 func Info(msg string, attrs ...slog.Attr) {
 	internalLog(context.Background(), slog.LevelInfo, msg, attrs...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// InfoContext logs at `slog.LevelInfo` with the given context.
 func InfoContext(ctx context.Context, msg string, attrs ...slog.Attr) {
 	internalLog(ctx, slog.LevelInfo, msg, attrs...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Warn logs at `slog.LevelWarn`.
 func Warn(msg string, attrs ...slog.Attr) {
 	internalLog(context.Background(), slog.LevelWarn, msg, attrs...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// WarnContext logs at `slog.LevelWarn` with the given context.
 func WarnContext(ctx context.Context, msg string, attrs ...slog.Attr) {
 	internalLog(ctx, slog.LevelWarn, msg, attrs...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Err logs at `slog.LevelError`.
 func Err(msg string, attrs ...slog.Attr) {
 	internalLog(context.Background(), slog.LevelError, msg, attrs...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ErrContext logs at `slog.LevelError` with the given context.
 func ErrContext(ctx context.Context, msg string, attrs ...slog.Attr) {
 	internalLog(ctx, slog.LevelError, msg, attrs...)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Begin logs at `slog.LevelInfo` the start of some operation and returns
+// the current time for use later to provide to the `End` function.
 func Begin() time.Time {
 	internalLog(context.Background(), slog.LevelInfo, "begin")
 
@@ -196,6 +253,9 @@ func Begin() time.Time {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// BeginContext logs at `slog.LevelInfo` with the given context the start of
+// some operation and returns the current time for use later to provide to
+// the `End` function.
 func BeginContext(ctx context.Context) time.Time {
 	internalLog(ctx, slog.LevelInfo, "begin")
 
@@ -205,12 +265,15 @@ func BeginContext(ctx context.Context) time.Time {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// End logs at `slog.LevelInfo` the end of some operation given a previous time.
 func End(t time.Time) {
 	internalLog(context.Background(), slog.LevelInfo, "end", Elapsed("elapsed", t))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// EndContext logs at `slog.LevelInfo` with the given context the end of some
+// operation given a previous time.
 func EndContext(ctx context.Context, t time.Time) {
 	internalLog(ctx, slog.LevelInfo, "end", Elapsed("elapsed", t))
 }

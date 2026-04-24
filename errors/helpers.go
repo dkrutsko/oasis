@@ -227,7 +227,7 @@ func expandError(err error) slog.Value {
 
 	//----------------------------------------------------------------------------//
 
-	// Empty string
+	// Nil error
 	if err == nil {
 		return slog.AnyValue(nil)
 	}
