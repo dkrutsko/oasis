@@ -15,7 +15,20 @@ import (
 	"github.com/dkrutsko/oasis/game"
 	"github.com/dkrutsko/oasis/leech"
 	"github.com/dkrutsko/oasis/logger"
-	"github.com/dkrutsko/oasis/server"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+
+type exitCodeType int
+
+const (
+	exitCodeSuccess     exitCodeType = 1
+	exitCodeLoadConfig  exitCodeType = 2
+	exitCodeCreateLeech exitCodeType = 3
+	exitCodeForceExit   exitCodeType = 4
+	exitCodeCreateGame  exitCodeType = 5
+	exitCodeDaemonError exitCodeType = 6
+	exitCodeCloseLeech  exitCodeType = 7
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -24,47 +37,94 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
-	// Load application config
-	err := config.LoadConfig()
-	if err != nil {
-		panic(err)
+	// Try loading application config
+	cfg, cfgErr := config.LoadConfig()
+	if cfg == nil {
+		// This should not be possible
+		// but just in case do a check
+		panic(cfgErr)
 	}
 
-	// Get application config
-	cfg := config.GetConfig()
+	{
+		opts := logger.NewOptions()
 
-	//----------------------------------------------------------------------------//
+		if cfg.Debug {
+			opts.Level = slog.LevelDebug
+		} else {
+			opts.Level = slog.LevelInfo
+		}
 
-	// Print version
+		opts.Json = cfg.Json
+		logger.SetLogger("", logger.New(opts))
+	}
+
 	if cfg.Version {
-		printVersion()
+		// Attempt to retrieve version
+		version := config.GetVersion()
+
+		if cfg.Json {
+			// Try encoding the version struct
+			data, err := json.Marshal(version)
+			if err != nil {
+				// Panic here is fine because
+				// failure here is quite rare
+				panic(err)
+			}
+
+			// Output JSON structure
+			fmt.Println(string(data))
+
+		} else {
+			// Output using string format
+			fmt.Println(version.String())
+		}
+
 		return
 	}
 
+	// Delay handling LoadConfig error
+	// until after the logger setup is
+	// complete and version is handled
+	if cfgErr != nil {
+		logger.Err(
+			"failed to load app config",
+			logger.Error("error", cfgErr),
+		)
+		os.Exit(int(exitCodeLoadConfig))
+	}
+
 	//----------------------------------------------------------------------------//
 
-	// Setup the app logger
-	setupLogger()
+	// Attempt to get splash screen
+	splash := config.GetSplash(cfg)
 
-	// Output splash screen
-	logSplash()
+	if cfg.Json {
+		logger.Info(
+			"launching "+config.AppName,
+			splash.SlogAttrs()...,
+		)
+
+	} else {
+		// Output the result with colors
+		fmt.Println(splash.Format(true))
+	}
 
 	//----------------------------------------------------------------------------//
 
 	l := leech.New("-device", "fpga")
 
-	err = l.Create()
+	err := l.Create()
 	if err != nil {
 		logger.Err(
-			"failed to initialize leech",
+			"failed to create leechcore",
 			logger.Error("error", err),
 		)
-		return
+		os.Exit(int(exitCodeCreateLeech))
 	}
 
 	//----------------------------------------------------------------------------//
 
-	// Enable a graceful shutdown
+	// Enable graceful shutdowns
 	ctx, cancel := setupSignals()
 	defer cancel()
 
@@ -87,112 +147,53 @@ func main() {
 			"failed to create game",
 			logger.Error("error", err),
 		)
-		return
+		os.Exit(int(exitCodeCreateGame))
 	}
 
 	//----------------------------------------------------------------------------//
 
-	s := server.New(
-		&server.Options{
-			Group: group,
-			Gctx:  gctx,
-			Addr:  cfg.Addr,
-			Port:  cfg.Port,
-			Game:  g,
-		},
-	)
-
-	err = s.Create()
-	if err != nil {
-		logger.Err(
-			"failed to create server",
-			logger.Error("error", err),
-		)
-		return
-	}
+	// TODO: shared memory and off-screen canvas
 
 	//----------------------------------------------------------------------------//
+
+	exitCode := exitCodeSuccess
 
 	// Await shutdown
 	err = group.Wait()
 	if err != nil {
+		exitCode = exitCodeDaemonError
+
 		logger.Err(
 			"failed during main loop",
 			logger.Error("error", err),
 		)
-		return
 	}
 
 	//----------------------------------------------------------------------------//
+
+	logger.Info("performing shutdown")
 
 	// Release handle
 	err = l.Close()
 	if err != nil {
+		exitCode = exitCodeCloseLeech
+
 		logger.Err(
-			"failed to close leech",
+			"failed to close leechcore",
 			logger.Error("error", err),
 		)
-		return
 	}
 
 	//----------------------------------------------------------------------------//
+
+	// Check if specifying exit code
+	if exitCode != exitCodeSuccess {
+		os.Exit(int(exitCode))
+	}
 
 	logger.Info("shutdown was clean")
 
 	//----------------------------------------------------------------------------//
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func printVersion() {
-
-	// Try to retrieve the version
-	version := config.GetVersion()
-
-	// Encode version into the resulting JSON
-	result, err := json.MarshalIndent(version, "", "\t")
-	if err != nil {
-		panic(err)
-	}
-
-	// Output result to console
-	fmt.Println(string(result))
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func setupLogger() {
-
-	// Get application config
-	cfg := config.GetConfig()
-
-	// If enabling debug
-	var level slog.Level
-	if cfg.Debug {
-		level = slog.LevelDebug
-	} else {
-		level = slog.LevelInfo
-	}
-
-	logger.SetLogger(
-		// Setup logger for the app
-		logger.New(level, cfg.Json),
-	)
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func logSplash() {
-
-	// Try to retrieve the version
-	version := config.GetVersion()
-
-	logger.Info(
-		"launching oasis",
-		logger.Time("date", version.Date),
-		logger.Uint16("build", version.Build),
-		logger.Uint16("rev", version.Rev),
-	)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -213,7 +214,7 @@ func setupSignals() (context.Context, context.CancelFunc) {
 
 		<-quit // Termination on subsequent requests
 		logger.Warn("forceful termination requested")
-		os.Exit(1)
+		os.Exit(int(exitCodeForceExit))
 	}()
 
 	return ctx, cancel

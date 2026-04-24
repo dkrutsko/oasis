@@ -1,15 +1,11 @@
 package config
 
 import (
-	"context"
 	"flag"
-	"net/url"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/dkrutsko/oasis/errors"
-	"github.com/dkrutsko/oasis/utility"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
