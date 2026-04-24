@@ -137,6 +137,103 @@ func (v Vector3) Rotate(axis Vector3, angle float64) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (v Vector3) Min(value Vector3) Vector3 {
+
+	x := v.X
+	if value.X < x {
+		x = value.X
+	}
+
+	y := v.Y
+	if value.Y < y {
+		y = value.Y
+	}
+
+	z := v.Z
+	if value.Z < z {
+		z = value.Z
+	}
+
+	return Vector3{x, y, z}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) Max(value Vector3) Vector3 {
+
+	x := v.X
+	if value.X > x {
+		x = value.X
+	}
+
+	y := v.Y
+	if value.Y > y {
+		y = value.Y
+	}
+
+	z := v.Z
+	if value.Z > z {
+		z = value.Z
+	}
+
+	return Vector3{x, y, z}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) Clamp(min, max Vector3) Vector3 {
+
+	x := v.X
+	if x > max.X {
+		x = max.X
+	} else if x < min.X {
+		x = min.X
+	}
+
+	y := v.Y
+	if y > max.Y {
+		y = max.Y
+	} else if y < min.Y {
+		y = min.Y
+	}
+
+	z := v.Z
+	if z > max.Z {
+		z = max.Z
+	} else if z < min.Z {
+		z = min.Z
+	}
+
+	return Vector3{x, y, z}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) Lerp(target Vector3, amount float64) Vector3 {
+
+	return Vector3{
+		v.X + (target.X-v.X)*amount,
+		v.Y + (target.Y-v.Y)*amount,
+		v.Z + (target.Z-v.Z)*amount,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector3) SmoothStep(target Vector3, amount float64) Vector3 {
+
+	amount = Clamp(amount, 0, 1)
+	amount = amount * amount * (3 - 2*amount)
+
+	return Vector3{
+		v.X + (target.X-v.X)*amount,
+		v.Y + (target.Y-v.Y)*amount,
+		v.Z + (target.Z-v.Z)*amount,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (v Vector3) Length() float64 {
 
 	return sysMath.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z)

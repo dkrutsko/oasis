@@ -6,6 +6,118 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func IsNanOrInf(value float64) bool {
+
+	return sysMath.IsNaN(value) || sysMath.IsInf(value, 0)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func ToDegrees(radians float64) float64 {
+
+	return radians * (180.0 / sysMath.Pi)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func ToRadians(degrees float64) float64 {
+
+	return degrees * (sysMath.Pi / 180.0)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func WrapPI(angle float64) float64 {
+
+	const twoPi = 2 * sysMath.Pi
+
+	angle = sysMath.Mod(angle+sysMath.Pi, twoPi)
+	if angle < 0 {
+		angle += twoPi
+	}
+
+	return angle - sysMath.Pi
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func WrapTwoPI(angle float64) float64 {
+
+	const twoPi = 2 * sysMath.Pi
+
+	angle = sysMath.Mod(angle, twoPi)
+	if angle < 0 {
+		angle += twoPi
+	}
+
+	return angle
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func Wrap180(angle float64) float64 {
+
+	angle = sysMath.Mod(angle+180, 360)
+	if angle < 0 {
+		angle += 360
+	}
+
+	return angle - 180
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func Wrap360(angle float64) float64 {
+
+	angle = sysMath.Mod(angle, 360)
+	if angle < 0 {
+		angle += 360
+	}
+
+	return angle
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func Distance(value1, value2 float64) float64 {
+
+	return sysMath.Abs(value1 - value2)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func Clamp(value, min, max float64) float64 {
+
+	if value > max {
+		return max
+	}
+
+	if value < min {
+		return min
+	}
+
+	return value
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func Lerp(value1, value2, amount float64) float64 {
+
+	return value1 + (value2-value1)*amount
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func SmoothStep(value1, value2, amount float64) float64 {
+
+	amount = Clamp(amount, 0, 1)
+	amount = amount * amount * (3 - 2*amount)
+
+	return value1 + (value2-value1)*amount
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func IsAngleEqual(source, target, tolerance float64) bool {
 
 	angle := sysMath.Mod(360+sysMath.Mod(target, 360), 360)
@@ -123,5 +235,5 @@ func CastRay(origin, target, direction Vector3, radius float64) float64 {
 		}
 	}
 
-	return sysMath.MaxFloat32
+	return sysMath.MaxFloat64
 }

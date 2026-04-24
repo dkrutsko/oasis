@@ -105,6 +105,84 @@ func (v Vector2) Reflect(normal Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (v Vector2) Min(value Vector2) Vector2 {
+
+	x := v.X
+	if value.X < x {
+		x = value.X
+	}
+
+	y := v.Y
+	if value.Y < y {
+		y = value.Y
+	}
+
+	return Vector2{x, y}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector2) Max(value Vector2) Vector2 {
+
+	x := v.X
+	if value.X > x {
+		x = value.X
+	}
+
+	y := v.Y
+	if value.Y > y {
+		y = value.Y
+	}
+
+	return Vector2{x, y}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector2) Clamp(min, max Vector2) Vector2 {
+
+	x := v.X
+	if x > max.X {
+		x = max.X
+	} else if x < min.X {
+		x = min.X
+	}
+
+	y := v.Y
+	if y > max.Y {
+		y = max.Y
+	} else if y < min.Y {
+		y = min.Y
+	}
+
+	return Vector2{x, y}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector2) Lerp(target Vector2, amount float64) Vector2 {
+
+	return Vector2{
+		v.X + (target.X-v.X)*amount,
+		v.Y + (target.Y-v.Y)*amount,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector2) SmoothStep(target Vector2, amount float64) Vector2 {
+
+	amount = Clamp(amount, 0, 1)
+	amount = amount * amount * (3 - 2*amount)
+
+	return Vector2{
+		v.X + (target.X-v.X)*amount,
+		v.Y + (target.Y-v.Y)*amount,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (v Vector2) Length() float64 {
 
 	return sysMath.Sqrt(v.X*v.X + v.Y*v.Y)

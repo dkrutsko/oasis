@@ -154,6 +154,152 @@ func (m Matrix) Determinant() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (m Matrix) GetUp() Vector3 {
+
+	return Vector3{m.M21, m.M22, m.M23}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) SetUp(value Vector3) Matrix {
+
+	m.M21 = value.X
+	m.M22 = value.Y
+	m.M23 = value.Z
+	return m
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) GetDown() Vector3 {
+
+	return Vector3{-m.M21, -m.M22, -m.M23}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) SetDown(value Vector3) Matrix {
+
+	m.M21 = -value.X
+	m.M22 = -value.Y
+	m.M23 = -value.Z
+	return m
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) GetRight() Vector3 {
+
+	return Vector3{m.M11, m.M12, m.M13}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) SetRight(value Vector3) Matrix {
+
+	m.M11 = value.X
+	m.M12 = value.Y
+	m.M13 = value.Z
+	return m
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) GetLeft() Vector3 {
+
+	return Vector3{-m.M11, -m.M12, -m.M13}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) SetLeft(value Vector3) Matrix {
+
+	m.M11 = -value.X
+	m.M12 = -value.Y
+	m.M13 = -value.Z
+	return m
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) GetForward() Vector3 {
+
+	return Vector3{-m.M31, -m.M32, -m.M33}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) SetForward(value Vector3) Matrix {
+
+	m.M31 = -value.X
+	m.M32 = -value.Y
+	m.M33 = -value.Z
+	return m
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) GetBackward() Vector3 {
+
+	return Vector3{m.M31, m.M32, m.M33}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) SetBackward(value Vector3) Matrix {
+
+	m.M31 = value.X
+	m.M32 = value.Y
+	m.M33 = value.Z
+	return m
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) GetTranslation() Vector3 {
+
+	return Vector3{m.M41, m.M42, m.M43}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) SetTranslation(value Vector3) Matrix {
+
+	m.M41 = value.X
+	m.M42 = value.Y
+	m.M43 = value.Z
+	return m
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m Matrix) Lerp(target Matrix, amount float64) Matrix {
+
+	return Matrix{
+		m.M11 + (target.M11-m.M11)*amount,
+		m.M12 + (target.M12-m.M12)*amount,
+		m.M13 + (target.M13-m.M13)*amount,
+		m.M14 + (target.M14-m.M14)*amount,
+
+		m.M21 + (target.M21-m.M21)*amount,
+		m.M22 + (target.M22-m.M22)*amount,
+		m.M23 + (target.M23-m.M23)*amount,
+		m.M24 + (target.M24-m.M24)*amount,
+
+		m.M31 + (target.M31-m.M31)*amount,
+		m.M32 + (target.M32-m.M32)*amount,
+		m.M33 + (target.M33-m.M33)*amount,
+		m.M34 + (target.M34-m.M34)*amount,
+
+		m.M41 + (target.M41-m.M41)*amount,
+		m.M42 + (target.M42-m.M42)*amount,
+		m.M43 + (target.M43-m.M43)*amount,
+		m.M44 + (target.M44-m.M44)*amount,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (m Matrix) ToSlice32() []float32 {
 
 	return []float32{
@@ -282,6 +428,110 @@ func MatrixProjectWithMvp(pos Vector3, width, height int, mvp Matrix) Vector3 {
 		(1 - transform.Y / transform.W) * float64(height) * 0.5,
 		minZ + (transform.Z / transform.W) * (maxZ - minZ),
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func MatrixCreateScale(x, y, z float64) Matrix {
+
+	return Matrix{
+		x, 0, 0, 0,
+		0, y, 0, 0,
+		0, 0, z, 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func MatrixCreateRotationX(radians float64) Matrix {
+
+	c := sysMath.Cos(radians)
+	s := sysMath.Sin(radians)
+
+	return Matrix{
+		1, 0, 0, 0,
+		0, c, s, 0,
+		0, -s, c, 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func MatrixCreateRotationY(radians float64) Matrix {
+
+	c := sysMath.Cos(radians)
+	s := sysMath.Sin(radians)
+
+	return Matrix{
+		c, 0, -s, 0,
+		0, 1, 0, 0,
+		s, 0, c, 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func MatrixCreateRotationZ(radians float64) Matrix {
+
+	c := sysMath.Cos(radians)
+	s := sysMath.Sin(radians)
+
+	return Matrix{
+		c, s, 0, 0,
+		-s, c, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func MatrixCreateTranslation(x, y, z float64) Matrix {
+
+	return Matrix{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		x, y, z, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func MatrixCreateFromAxisAngle(axis Vector3, angle float64) Matrix {
+
+	x := axis.X
+	y := axis.Y
+	z := axis.Z
+
+	s := sysMath.Sin(angle)
+	c := sysMath.Cos(angle)
+
+	xx := x * x
+	yy := y * y
+	zz := z * z
+	xy := x * y
+	xz := x * z
+	yz := y * z
+
+	return Matrix{
+		xx + (1-xx)*c, xy - xy*c + z*s, xz - xz*c - y*s, 0,
+		xy - xy*c - z*s, yy + (1-yy)*c, yz - yz*c + x*s, 0,
+		xz - xz*c + y*s, yz - yz*c - x*s, zz + (1-zz)*c, 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func MatrixCreateFromYawPitchRoll(yaw, pitch, roll float64) Matrix {
+
+	return MatrixCreateRotationY(yaw).
+		Mul(MatrixCreateRotationX(pitch)).
+		Mul(MatrixCreateRotationZ(roll))
 }
 
 //----------------------------------------------------------------------------//

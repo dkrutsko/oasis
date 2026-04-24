@@ -104,6 +104,136 @@ func (v Vector4) Dot(value Vector4) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (v Vector4) Reflect(normal Vector4) Vector4 {
+
+	dot := 2 * (v.X*normal.X + v.Y*normal.Y + v.Z*normal.Z + v.W*normal.W)
+
+	return Vector4{
+		v.X - dot*normal.X,
+		v.Y - dot*normal.Y,
+		v.Z - dot*normal.Z,
+		v.W - dot*normal.W,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) Min(value Vector4) Vector4 {
+
+	x := v.X
+	if value.X < x {
+		x = value.X
+	}
+
+	y := v.Y
+	if value.Y < y {
+		y = value.Y
+	}
+
+	z := v.Z
+	if value.Z < z {
+		z = value.Z
+	}
+
+	w := v.W
+	if value.W < w {
+		w = value.W
+	}
+
+	return Vector4{x, y, z, w}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) Max(value Vector4) Vector4 {
+
+	x := v.X
+	if value.X > x {
+		x = value.X
+	}
+
+	y := v.Y
+	if value.Y > y {
+		y = value.Y
+	}
+
+	z := v.Z
+	if value.Z > z {
+		z = value.Z
+	}
+
+	w := v.W
+	if value.W > w {
+		w = value.W
+	}
+
+	return Vector4{x, y, z, w}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) Clamp(min, max Vector4) Vector4 {
+
+	x := v.X
+	if x > max.X {
+		x = max.X
+	} else if x < min.X {
+		x = min.X
+	}
+
+	y := v.Y
+	if y > max.Y {
+		y = max.Y
+	} else if y < min.Y {
+		y = min.Y
+	}
+
+	z := v.Z
+	if z > max.Z {
+		z = max.Z
+	} else if z < min.Z {
+		z = min.Z
+	}
+
+	w := v.W
+	if w > max.W {
+		w = max.W
+	} else if w < min.W {
+		w = min.W
+	}
+
+	return Vector4{x, y, z, w}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) Lerp(target Vector4, amount float64) Vector4 {
+
+	return Vector4{
+		v.X + (target.X-v.X)*amount,
+		v.Y + (target.Y-v.Y)*amount,
+		v.Z + (target.Z-v.Z)*amount,
+		v.W + (target.W-v.W)*amount,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v Vector4) SmoothStep(target Vector4, amount float64) Vector4 {
+
+	amount = Clamp(amount, 0, 1)
+	amount = amount * amount * (3 - 2*amount)
+
+	return Vector4{
+		v.X + (target.X-v.X)*amount,
+		v.Y + (target.Y-v.Y)*amount,
+		v.Z + (target.Z-v.Z)*amount,
+		v.W + (target.W-v.W)*amount,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (v Vector4) Length() float64 {
 
 	return sysMath.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z + v.W*v.W)
@@ -230,7 +360,7 @@ func Vector4FromPacked(packed int64) Vector4 {
 	wSquared := x*x + y*y + z*z
 
 	w := 0.0
-	if sysMath.Abs(wSquared-1) >= b {
+	if wSquared < 1 && sysMath.Abs(wSquared-1) >= b {
 		w = sysMath.Sqrt(1 - wSquared)
 	}
 
