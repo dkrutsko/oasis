@@ -13,9 +13,16 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 var (
-	Vector3Zero  = Vector3{0, 0, 0}
+	// Vector3Zero represents a zero vector.
+	Vector3Zero = Vector3{0, 0, 0}
+
+	// Vector3UnitX represents a unit vector along the x-axis.
 	Vector3UnitX = Vector3{1, 0, 0}
+
+	// Vector3UnitY represents a unit vector along the y-axis.
 	Vector3UnitY = Vector3{0, 1, 0}
+
+	// Vector3UnitZ represents a unit vector along the z-axis.
 	Vector3UnitZ = Vector3{0, 0, 1}
 )
 
@@ -25,9 +32,15 @@ var (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector3 represents a vector with three components.
 type Vector3 struct {
+	// X component of the vector.
 	X float64
+
+	// Y component of the vector.
 	Y float64
+
+	// Z component of the vector.
 	Z float64
 }
 
@@ -37,6 +50,7 @@ type Vector3 struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// String returns the string representation of the vector.
 func (v Vector3) String() string {
 
 	return fmt.Sprintf("[%.2f, %.2f, %.2f]", v.X, v.Y, v.Z)
@@ -44,6 +58,7 @@ func (v Vector3) String() string {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// IsZero returns whether all components are zero.
 func (v Vector3) IsZero() bool {
 
 	return v.X == 0 && v.Y == 0 && v.Z == 0
@@ -51,6 +66,8 @@ func (v Vector3) IsZero() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Normalize returns a unit vector in the same direction. Returns `Vector3Zero`
+// if the magnitude is zero.
 func (v Vector3) Normalize() Vector3 {
 
 	magnitude := sysMath.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z)
@@ -69,6 +86,7 @@ func (v Vector3) Normalize() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Distance returns the Euclidean distance to another vector.
 func (v Vector3) Distance(value Vector3) float64 {
 
 	dx := v.X - value.X
@@ -80,6 +98,7 @@ func (v Vector3) Distance(value Vector3) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// DistanceSq returns the squared Euclidean distance to another vector.
 func (v Vector3) DistanceSq(value Vector3) float64 {
 
 	dx := v.X - value.X
@@ -91,6 +110,7 @@ func (v Vector3) DistanceSq(value Vector3) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Dot returns the dot product with another vector.
 func (v Vector3) Dot(value Vector3) float64 {
 
 	return v.X*value.X + v.Y*value.Y + v.Z*value.Z
@@ -98,6 +118,8 @@ func (v Vector3) Dot(value Vector3) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Reflect returns the reflection of the vector off a surface defined by the
+// given normal.
 func (v Vector3) Reflect(normal Vector3) Vector3 {
 
 	dot := 2 * (v.X*normal.X + v.Y*normal.Y + v.Z*normal.Z)
@@ -111,6 +133,7 @@ func (v Vector3) Reflect(normal Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Cross returns the cross product with another vector.
 func (v Vector3) Cross(value Vector3) Vector3 {
 
 	return Vector3{
@@ -122,6 +145,8 @@ func (v Vector3) Cross(value Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Rotate returns the vector rotated around the given axis by the specified
+// angle in radians using the Rodrigues rotation formula.
 func (v Vector3) Rotate(axis Vector3, angle float64) Vector3 {
 
 	sinAngle := sysMath.Sin(-angle)
@@ -137,6 +162,7 @@ func (v Vector3) Rotate(axis Vector3, angle float64) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Min returns the component-wise minimum of two vectors.
 func (v Vector3) Min(value Vector3) Vector3 {
 
 	x := v.X
@@ -159,6 +185,7 @@ func (v Vector3) Min(value Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Max returns the component-wise maximum of two vectors.
 func (v Vector3) Max(value Vector3) Vector3 {
 
 	x := v.X
@@ -181,6 +208,7 @@ func (v Vector3) Max(value Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Clamp restricts each component to the specified range.
 func (v Vector3) Clamp(min, max Vector3) Vector3 {
 
 	x := v.X
@@ -209,6 +237,7 @@ func (v Vector3) Clamp(min, max Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Lerp performs linear interpolation toward the target.
 func (v Vector3) Lerp(target Vector3, amount float64) Vector3 {
 
 	return Vector3{
@@ -220,6 +249,8 @@ func (v Vector3) Lerp(target Vector3, amount float64) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SmoothStep performs Hermite interpolation toward the target with smoothing
+// at the edges.
 func (v Vector3) SmoothStep(target Vector3, amount float64) Vector3 {
 
 	amount = Clamp(amount, 0, 1)
@@ -234,6 +265,7 @@ func (v Vector3) SmoothStep(target Vector3, amount float64) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Length returns the magnitude of the vector.
 func (v Vector3) Length() float64 {
 
 	return sysMath.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z)
@@ -241,6 +273,7 @@ func (v Vector3) Length() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// LengthSq returns the squared magnitude of the vector.
 func (v Vector3) LengthSq() float64 {
 
 	return v.X*v.X + v.Y*v.Y + v.Z*v.Z
@@ -248,6 +281,7 @@ func (v Vector3) LengthSq() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToSlice32 returns the components as a float32 slice.
 func (v Vector3) ToSlice32() []float32 {
 
 	return []float32{
@@ -259,6 +293,7 @@ func (v Vector3) ToSlice32() []float32 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToSlice64 returns the components as a float64 slice.
 func (v Vector3) ToSlice64() []float64 {
 
 	return []float64{
@@ -274,6 +309,7 @@ func (v Vector3) ToSlice64() []float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector3FromSlice32 creates a Vector3 from a float32 slice.
 func Vector3FromSlice32(values []float32) (Vector3, error) {
 
 	if len(values) != 3 {
@@ -291,6 +327,7 @@ func Vector3FromSlice32(values []float32) (Vector3, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector3FromSlice64 creates a Vector3 from a float64 slice.
 func Vector3FromSlice64(values []float64) (Vector3, error) {
 
 	if len(values) != 3 {
@@ -308,6 +345,8 @@ func Vector3FromSlice64(values []float64) (Vector3, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector3TransformVector2 transforms a Vector2 by a matrix and returns the
+// resulting Vector3.
 func Vector3TransformVector2(matrix Matrix, value Vector2) Vector3 {
 
 	return Vector3{
@@ -319,6 +358,8 @@ func Vector3TransformVector2(matrix Matrix, value Vector2) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector3TransformVector3 transforms a Vector3 by a matrix and returns the
+// resulting Vector3.
 func Vector3TransformVector3(matrix Matrix, value Vector3) Vector3 {
 
 	return Vector3{
@@ -330,6 +371,8 @@ func Vector3TransformVector3(matrix Matrix, value Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector3TransformVector4 transforms a Vector4 by a matrix and returns the
+// resulting Vector3.
 func Vector3TransformVector4(matrix Matrix, value Vector4) Vector3 {
 
 	return Vector3{
@@ -345,6 +388,7 @@ func Vector3TransformVector4(matrix Matrix, value Vector4) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Add returns the component-wise sum of two vectors.
 func (v Vector3) Add(value Vector3) Vector3 {
 
 	return Vector3{
@@ -356,6 +400,7 @@ func (v Vector3) Add(value Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Sub returns the component-wise difference of two vectors.
 func (v Vector3) Sub(value Vector3) Vector3 {
 
 	return Vector3{
@@ -367,6 +412,7 @@ func (v Vector3) Sub(value Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Mul returns the component-wise product of two vectors.
 func (v Vector3) Mul(value Vector3) Vector3 {
 
 	return Vector3{
@@ -378,6 +424,7 @@ func (v Vector3) Mul(value Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Div returns the component-wise quotient of two vectors.
 func (v Vector3) Div(value Vector3) Vector3 {
 
 	return Vector3{
@@ -389,6 +436,7 @@ func (v Vector3) Div(value Vector3) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// AddScalar adds a scalar to each component.
 func (v Vector3) AddScalar(scalar float64) Vector3 {
 
 	return Vector3{
@@ -400,6 +448,7 @@ func (v Vector3) AddScalar(scalar float64) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SubScalar subtracts a scalar from each component.
 func (v Vector3) SubScalar(scalar float64) Vector3 {
 
 	return Vector3{
@@ -411,6 +460,7 @@ func (v Vector3) SubScalar(scalar float64) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MulScalar multiplies each component by a scalar.
 func (v Vector3) MulScalar(scalar float64) Vector3 {
 
 	return Vector3{
@@ -422,6 +472,7 @@ func (v Vector3) MulScalar(scalar float64) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// DivScalar divides each component by a scalar.
 func (v Vector3) DivScalar(scalar float64) Vector3 {
 
 	return Vector3{
@@ -433,6 +484,7 @@ func (v Vector3) DivScalar(scalar float64) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Neg returns the negation of the vector.
 func (v Vector3) Neg() Vector3 {
 
 	return Vector3{
@@ -444,6 +496,7 @@ func (v Vector3) Neg() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Compare performs lexicographic comparison of two vectors. Returns -1, 0, or 1.
 func (v Vector3) Compare(value Vector3) int {
 
 	if v.X < value.X {
@@ -472,30 +525,37 @@ func (v Vector3) Compare(value Vector3) int {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Lt returns whether the vector is lexicographically less than the given vector.
 func (v Vector3) Lt(value Vector3) bool {
 	return v.Compare(value) < 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Gt returns whether the vector is lexicographically greater than the given vector.
 func (v Vector3) Gt(value Vector3) bool {
 	return v.Compare(value) > 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Le returns whether the vector is lexicographically less than or equal to
+// the given vector.
 func (v Vector3) Le(value Vector3) bool {
 	return v.Compare(value) <= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Ge returns whether the vector is lexicographically greater than or equal to
+// the given vector.
 func (v Vector3) Ge(value Vector3) bool {
 	return v.Compare(value) >= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Eq returns whether all components are equal.
 func (v Vector3) Eq(value Vector3) bool {
 
 	return v.X == value.X && v.Y == value.Y && v.Z == value.Z
@@ -503,6 +563,7 @@ func (v Vector3) Eq(value Vector3) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Ne returns whether any component is not equal.
 func (v Vector3) Ne(value Vector3) bool {
 
 	return v.X != value.X || v.Y != value.Y || v.Z != value.Z

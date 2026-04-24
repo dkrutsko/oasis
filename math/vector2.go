@@ -13,8 +13,13 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 var (
-	Vector2Zero  = Vector2{0, 0}
+	// Vector2Zero represents a zero vector.
+	Vector2Zero = Vector2{0, 0}
+
+	// Vector2UnitX represents a unit vector along the x-axis.
 	Vector2UnitX = Vector2{1, 0}
+
+	// Vector2UnitY represents a unit vector along the y-axis.
 	Vector2UnitY = Vector2{0, 1}
 )
 
@@ -24,8 +29,12 @@ var (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector2 represents a vector with two components.
 type Vector2 struct {
+	// X component of the vector.
 	X float64
+
+	// Y component of the vector.
 	Y float64
 }
 
@@ -35,6 +44,7 @@ type Vector2 struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// String returns the string representation of the vector.
 func (v Vector2) String() string {
 
 	return fmt.Sprintf("[%.2f, %.2f]", v.X, v.Y)
@@ -42,6 +52,7 @@ func (v Vector2) String() string {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// IsZero returns whether all components are zero.
 func (v Vector2) IsZero() bool {
 
 	return v.X == 0 && v.Y == 0
@@ -49,6 +60,8 @@ func (v Vector2) IsZero() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Normalize returns a unit vector in the same direction. Returns `Vector2Zero`
+// if the magnitude is zero.
 func (v Vector2) Normalize() Vector2 {
 
 	magnitude := sysMath.Sqrt(v.X*v.X + v.Y*v.Y)
@@ -66,6 +79,7 @@ func (v Vector2) Normalize() Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Distance returns the Euclidean distance to another vector.
 func (v Vector2) Distance(value Vector2) float64 {
 
 	dx := v.X - value.X
@@ -76,6 +90,7 @@ func (v Vector2) Distance(value Vector2) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// DistanceSq returns the squared Euclidean distance to another vector.
 func (v Vector2) DistanceSq(value Vector2) float64 {
 
 	dx := v.X - value.X
@@ -86,6 +101,7 @@ func (v Vector2) DistanceSq(value Vector2) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Dot returns the dot product with another vector.
 func (v Vector2) Dot(value Vector2) float64 {
 
 	return v.X*value.X + v.Y*value.Y
@@ -93,6 +109,8 @@ func (v Vector2) Dot(value Vector2) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Reflect returns the reflection of the vector off a surface defined by the
+// given normal.
 func (v Vector2) Reflect(normal Vector2) Vector2 {
 
 	dot := 2 * (v.X*normal.X + v.Y*normal.Y)
@@ -105,6 +123,7 @@ func (v Vector2) Reflect(normal Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Min returns the component-wise minimum of two vectors.
 func (v Vector2) Min(value Vector2) Vector2 {
 
 	x := v.X
@@ -122,6 +141,7 @@ func (v Vector2) Min(value Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Max returns the component-wise maximum of two vectors.
 func (v Vector2) Max(value Vector2) Vector2 {
 
 	x := v.X
@@ -139,6 +159,7 @@ func (v Vector2) Max(value Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Clamp restricts each component to the specified range.
 func (v Vector2) Clamp(min, max Vector2) Vector2 {
 
 	x := v.X
@@ -160,6 +181,7 @@ func (v Vector2) Clamp(min, max Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Lerp performs linear interpolation toward the target.
 func (v Vector2) Lerp(target Vector2, amount float64) Vector2 {
 
 	return Vector2{
@@ -170,6 +192,8 @@ func (v Vector2) Lerp(target Vector2, amount float64) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SmoothStep performs Hermite interpolation toward the target with smoothing
+// at the edges.
 func (v Vector2) SmoothStep(target Vector2, amount float64) Vector2 {
 
 	amount = Clamp(amount, 0, 1)
@@ -183,6 +207,7 @@ func (v Vector2) SmoothStep(target Vector2, amount float64) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Length returns the magnitude of the vector.
 func (v Vector2) Length() float64 {
 
 	return sysMath.Sqrt(v.X*v.X + v.Y*v.Y)
@@ -190,6 +215,7 @@ func (v Vector2) Length() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// LengthSq returns the squared magnitude of the vector.
 func (v Vector2) LengthSq() float64 {
 
 	return v.X*v.X + v.Y*v.Y
@@ -197,6 +223,7 @@ func (v Vector2) LengthSq() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToSlice32 returns the components as a float32 slice.
 func (v Vector2) ToSlice32() []float32 {
 
 	return []float32{
@@ -207,6 +234,7 @@ func (v Vector2) ToSlice32() []float32 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToSlice64 returns the components as a float64 slice.
 func (v Vector2) ToSlice64() []float64 {
 
 	return []float64{
@@ -221,6 +249,7 @@ func (v Vector2) ToSlice64() []float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector2FromSlice32 creates a Vector2 from a float32 slice.
 func Vector2FromSlice32(values []float32) (Vector2, error) {
 
 	if len(values) != 2 {
@@ -237,6 +266,7 @@ func Vector2FromSlice32(values []float32) (Vector2, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector2FromSlice64 creates a Vector2 from a float64 slice.
 func Vector2FromSlice64(values []float64) (Vector2, error) {
 
 	if len(values) != 2 {
@@ -253,6 +283,8 @@ func Vector2FromSlice64(values []float64) (Vector2, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector2TransformVector2 transforms a Vector2 by a matrix and returns the
+// resulting Vector2.
 func Vector2TransformVector2(matrix Matrix, value Vector2) Vector2 {
 
 	return Vector2{
@@ -263,6 +295,8 @@ func Vector2TransformVector2(matrix Matrix, value Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector2TransformVector3 transforms a Vector3 by a matrix and returns the
+// resulting Vector2.
 func Vector2TransformVector3(matrix Matrix, value Vector3) Vector2 {
 
 	return Vector2{
@@ -273,6 +307,8 @@ func Vector2TransformVector3(matrix Matrix, value Vector3) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector2TransformVector4 transforms a Vector4 by a matrix and returns the
+// resulting Vector2.
 func Vector2TransformVector4(matrix Matrix, value Vector4) Vector2 {
 
 	return Vector2{
@@ -287,6 +323,7 @@ func Vector2TransformVector4(matrix Matrix, value Vector4) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Add returns the component-wise sum of two vectors.
 func (v Vector2) Add(value Vector2) Vector2 {
 
 	return Vector2{
@@ -297,6 +334,7 @@ func (v Vector2) Add(value Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Sub returns the component-wise difference of two vectors.
 func (v Vector2) Sub(value Vector2) Vector2 {
 
 	return Vector2{
@@ -307,6 +345,7 @@ func (v Vector2) Sub(value Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Mul returns the component-wise product of two vectors.
 func (v Vector2) Mul(value Vector2) Vector2 {
 
 	return Vector2{
@@ -317,6 +356,7 @@ func (v Vector2) Mul(value Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Div returns the component-wise quotient of two vectors.
 func (v Vector2) Div(value Vector2) Vector2 {
 
 	return Vector2{
@@ -327,6 +367,7 @@ func (v Vector2) Div(value Vector2) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// AddScalar adds a scalar to each component.
 func (v Vector2) AddScalar(scalar float64) Vector2 {
 
 	return Vector2{
@@ -337,6 +378,7 @@ func (v Vector2) AddScalar(scalar float64) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SubScalar subtracts a scalar from each component.
 func (v Vector2) SubScalar(scalar float64) Vector2 {
 
 	return Vector2{
@@ -347,6 +389,7 @@ func (v Vector2) SubScalar(scalar float64) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MulScalar multiplies each component by a scalar.
 func (v Vector2) MulScalar(scalar float64) Vector2 {
 
 	return Vector2{
@@ -357,6 +400,7 @@ func (v Vector2) MulScalar(scalar float64) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// DivScalar divides each component by a scalar.
 func (v Vector2) DivScalar(scalar float64) Vector2 {
 
 	return Vector2{
@@ -367,6 +411,7 @@ func (v Vector2) DivScalar(scalar float64) Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Neg returns the negation of the vector.
 func (v Vector2) Neg() Vector2 {
 
 	return Vector2{
@@ -377,6 +422,7 @@ func (v Vector2) Neg() Vector2 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Compare performs lexicographic comparison of two vectors. Returns -1, 0, or 1.
 func (v Vector2) Compare(value Vector2) int {
 
 	if v.X < value.X {
@@ -398,30 +444,37 @@ func (v Vector2) Compare(value Vector2) int {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Lt returns whether the vector is lexicographically less than the given vector.
 func (v Vector2) Lt(value Vector2) bool {
 	return v.Compare(value) < 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Gt returns whether the vector is lexicographically greater than the given vector.
 func (v Vector2) Gt(value Vector2) bool {
 	return v.Compare(value) > 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Le returns whether the vector is lexicographically less than or equal to
+// the given vector.
 func (v Vector2) Le(value Vector2) bool {
 	return v.Compare(value) <= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Ge returns whether the vector is lexicographically greater than or equal to
+// the given vector.
 func (v Vector2) Ge(value Vector2) bool {
 	return v.Compare(value) >= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Eq returns whether all components are equal.
 func (v Vector2) Eq(value Vector2) bool {
 
 	return v.X == value.X && v.Y == value.Y
@@ -429,6 +482,7 @@ func (v Vector2) Eq(value Vector2) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Ne returns whether any component is not equal.
 func (v Vector2) Ne(value Vector2) bool {
 
 	return v.X != value.X || v.Y != value.Y

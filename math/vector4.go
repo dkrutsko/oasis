@@ -13,11 +13,22 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 var (
-	Vector4Zero     = Vector4{0, 0, 0, 0}
-	Vector4UnitX    = Vector4{1, 0, 0, 0}
-	Vector4UnitY    = Vector4{0, 1, 0, 0}
-	Vector4UnitZ    = Vector4{0, 0, 1, 0}
-	Vector4UnitW    = Vector4{0, 0, 0, 1}
+	// Vector4Zero represents a zero vector.
+	Vector4Zero = Vector4{0, 0, 0, 0}
+
+	// Vector4UnitX represents a unit vector along the x-axis.
+	Vector4UnitX = Vector4{1, 0, 0, 0}
+
+	// Vector4UnitY represents a unit vector along the y-axis.
+	Vector4UnitY = Vector4{0, 1, 0, 0}
+
+	// Vector4UnitZ represents a unit vector along the z-axis.
+	Vector4UnitZ = Vector4{0, 0, 1, 0}
+
+	// Vector4UnitW represents a unit vector along the w-axis.
+	Vector4UnitW = Vector4{0, 0, 0, 1}
+
+	// Vector4Identity represents an identity quaternion.
 	Vector4Identity = Vector4{0, 0, 0, 1}
 )
 
@@ -27,10 +38,18 @@ var (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector4 represents a vector with four components.
 type Vector4 struct {
+	// X component of the vector.
 	X float64
+
+	// Y component of the vector.
 	Y float64
+
+	// Z component of the vector.
 	Z float64
+
+	// W component of the vector.
 	W float64
 }
 
@@ -40,6 +59,7 @@ type Vector4 struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// String returns the string representation of the vector.
 func (v Vector4) String() string {
 
 	return fmt.Sprintf("[%.2f, %.2f, %.2f, %.2f]", v.X, v.Y, v.Z, v.W)
@@ -47,6 +67,7 @@ func (v Vector4) String() string {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// IsZero returns whether all components are zero.
 func (v Vector4) IsZero() bool {
 
 	return v.X == 0 && v.Y == 0 && v.Z == 0 && v.W == 0
@@ -54,6 +75,8 @@ func (v Vector4) IsZero() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Normalize returns a unit vector in the same direction. Returns `Vector4Zero`
+// if the magnitude is zero.
 func (v Vector4) Normalize() Vector4 {
 
 	magnitude := sysMath.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z + v.W*v.W)
@@ -73,6 +96,7 @@ func (v Vector4) Normalize() Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Distance returns the Euclidean distance to another vector.
 func (v Vector4) Distance(value Vector4) float64 {
 
 	dx := v.X - value.X
@@ -85,6 +109,7 @@ func (v Vector4) Distance(value Vector4) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// DistanceSq returns the squared Euclidean distance to another vector.
 func (v Vector4) DistanceSq(value Vector4) float64 {
 
 	dx := v.X - value.X
@@ -97,6 +122,7 @@ func (v Vector4) DistanceSq(value Vector4) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Dot returns the dot product with another vector.
 func (v Vector4) Dot(value Vector4) float64 {
 
 	return v.X*value.X + v.Y*value.Y + v.Z*value.Z + v.W*value.W
@@ -104,6 +130,8 @@ func (v Vector4) Dot(value Vector4) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Reflect returns the reflection of the vector off a surface defined by the
+// given normal.
 func (v Vector4) Reflect(normal Vector4) Vector4 {
 
 	dot := 2 * (v.X*normal.X + v.Y*normal.Y + v.Z*normal.Z + v.W*normal.W)
@@ -118,6 +146,7 @@ func (v Vector4) Reflect(normal Vector4) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Min returns the component-wise minimum of two vectors.
 func (v Vector4) Min(value Vector4) Vector4 {
 
 	x := v.X
@@ -145,6 +174,7 @@ func (v Vector4) Min(value Vector4) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Max returns the component-wise maximum of two vectors.
 func (v Vector4) Max(value Vector4) Vector4 {
 
 	x := v.X
@@ -172,6 +202,7 @@ func (v Vector4) Max(value Vector4) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Clamp restricts each component to the specified range.
 func (v Vector4) Clamp(min, max Vector4) Vector4 {
 
 	x := v.X
@@ -207,6 +238,7 @@ func (v Vector4) Clamp(min, max Vector4) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Lerp performs linear interpolation toward the target.
 func (v Vector4) Lerp(target Vector4, amount float64) Vector4 {
 
 	return Vector4{
@@ -219,6 +251,8 @@ func (v Vector4) Lerp(target Vector4, amount float64) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SmoothStep performs Hermite interpolation toward the target with smoothing
+// at the edges.
 func (v Vector4) SmoothStep(target Vector4, amount float64) Vector4 {
 
 	amount = Clamp(amount, 0, 1)
@@ -234,6 +268,7 @@ func (v Vector4) SmoothStep(target Vector4, amount float64) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Length returns the magnitude of the vector.
 func (v Vector4) Length() float64 {
 
 	return sysMath.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z + v.W*v.W)
@@ -241,6 +276,7 @@ func (v Vector4) Length() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// LengthSq returns the squared magnitude of the vector.
 func (v Vector4) LengthSq() float64 {
 
 	return v.X*v.X + v.Y*v.Y + v.Z*v.Z + v.W*v.W
@@ -248,6 +284,7 @@ func (v Vector4) LengthSq() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToSlice32 returns the components as a float32 slice.
 func (v Vector4) ToSlice32() []float32 {
 
 	return []float32{
@@ -260,6 +297,7 @@ func (v Vector4) ToSlice32() []float32 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToSlice64 returns the components as a float64 slice.
 func (v Vector4) ToSlice64() []float64 {
 
 	return []float64{
@@ -276,6 +314,7 @@ func (v Vector4) ToSlice64() []float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector4FromSlice32 creates a Vector4 from a float32 slice.
 func Vector4FromSlice32(values []float32) (Vector4, error) {
 
 	if len(values) != 4 {
@@ -294,6 +333,7 @@ func Vector4FromSlice32(values []float32) (Vector4, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector4FromSlice64 creates a Vector4 from a float64 slice.
 func Vector4FromSlice64(values []float64) (Vector4, error) {
 
 	if len(values) != 4 {
@@ -312,6 +352,8 @@ func Vector4FromSlice64(values []float64) (Vector4, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector4TransformVector2 transforms a Vector2 by a matrix and returns the
+// resulting Vector4.
 func Vector4TransformVector2(matrix Matrix, value Vector2) Vector4 {
 
 	return Vector4{
@@ -324,6 +366,8 @@ func Vector4TransformVector2(matrix Matrix, value Vector2) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector4TransformVector3 transforms a Vector3 by a matrix and returns the
+// resulting Vector4.
 func Vector4TransformVector3(matrix Matrix, value Vector3) Vector4 {
 
 	return Vector4{
@@ -336,6 +380,8 @@ func Vector4TransformVector3(matrix Matrix, value Vector3) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector4TransformVector4 transforms a Vector4 by a matrix and returns the
+// resulting Vector4.
 func Vector4TransformVector4(matrix Matrix, value Vector4) Vector4 {
 
 	return Vector4{
@@ -348,6 +394,10 @@ func Vector4TransformVector4(matrix Matrix, value Vector4) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Vector4FromPacked decompresses a packed 64-bit quaternion into its four
+// components. The packed format stores x in the upper 22 bits and y and z in
+// 21 bits each. The w component is reconstructed from the unit quaternion
+// constraint.
 func Vector4FromPacked(packed int64) Vector4 {
 
 	const a = 1 / 2097152.0
@@ -373,6 +423,7 @@ func Vector4FromPacked(packed int64) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Add returns the component-wise sum of two vectors.
 func (v Vector4) Add(value Vector4) Vector4 {
 
 	return Vector4{
@@ -385,6 +436,7 @@ func (v Vector4) Add(value Vector4) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Sub returns the component-wise difference of two vectors.
 func (v Vector4) Sub(value Vector4) Vector4 {
 
 	return Vector4{
@@ -397,6 +449,7 @@ func (v Vector4) Sub(value Vector4) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Mul returns the component-wise product of two vectors.
 func (v Vector4) Mul(value Vector4) Vector4 {
 
 	return Vector4{
@@ -409,6 +462,7 @@ func (v Vector4) Mul(value Vector4) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Div returns the component-wise quotient of two vectors.
 func (v Vector4) Div(value Vector4) Vector4 {
 
 	return Vector4{
@@ -421,6 +475,7 @@ func (v Vector4) Div(value Vector4) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// AddScalar adds a scalar to each component.
 func (v Vector4) AddScalar(scalar float64) Vector4 {
 
 	return Vector4{
@@ -433,6 +488,7 @@ func (v Vector4) AddScalar(scalar float64) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SubScalar subtracts a scalar from each component.
 func (v Vector4) SubScalar(scalar float64) Vector4 {
 
 	return Vector4{
@@ -445,6 +501,7 @@ func (v Vector4) SubScalar(scalar float64) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MulScalar multiplies each component by a scalar.
 func (v Vector4) MulScalar(scalar float64) Vector4 {
 
 	return Vector4{
@@ -457,6 +514,7 @@ func (v Vector4) MulScalar(scalar float64) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// DivScalar divides each component by a scalar.
 func (v Vector4) DivScalar(scalar float64) Vector4 {
 
 	return Vector4{
@@ -469,6 +527,7 @@ func (v Vector4) DivScalar(scalar float64) Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Neg returns the negation of the vector.
 func (v Vector4) Neg() Vector4 {
 
 	return Vector4{
@@ -481,6 +540,7 @@ func (v Vector4) Neg() Vector4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Compare performs lexicographic comparison of two vectors. Returns -1, 0, or 1.
 func (v Vector4) Compare(value Vector4) int {
 
 	if v.X < value.X {
@@ -516,30 +576,37 @@ func (v Vector4) Compare(value Vector4) int {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Lt returns whether the vector is lexicographically less than the given vector.
 func (v Vector4) Lt(value Vector4) bool {
 	return v.Compare(value) < 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Gt returns whether the vector is lexicographically greater than the given vector.
 func (v Vector4) Gt(value Vector4) bool {
 	return v.Compare(value) > 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Le returns whether the vector is lexicographically less than or equal to
+// the given vector.
 func (v Vector4) Le(value Vector4) bool {
 	return v.Compare(value) <= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Ge returns whether the vector is lexicographically greater than or equal to
+// the given vector.
 func (v Vector4) Ge(value Vector4) bool {
 	return v.Compare(value) >= 0
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Eq returns whether all components are equal.
 func (v Vector4) Eq(value Vector4) bool {
 
 	return v.X == value.X && v.Y == value.Y && v.Z == value.Z && v.W == value.W
@@ -547,6 +614,7 @@ func (v Vector4) Eq(value Vector4) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Ne returns whether any component is not equal.
 func (v Vector4) Ne(value Vector4) bool {
 
 	return v.X != value.X || v.Y != value.Y || v.Z != value.Z || v.W != value.W

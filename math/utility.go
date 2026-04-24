@@ -6,6 +6,7 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// IsNanOrInf returns whether the value is NaN or infinity.
 func IsNanOrInf(value float64) bool {
 
 	return sysMath.IsNaN(value) || sysMath.IsInf(value, 0)
@@ -13,6 +14,7 @@ func IsNanOrInf(value float64) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToDegrees converts radians to degrees.
 func ToDegrees(radians float64) float64 {
 
 	return radians * (180.0 / sysMath.Pi)
@@ -20,6 +22,7 @@ func ToDegrees(radians float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToRadians converts degrees to radians.
 func ToRadians(degrees float64) float64 {
 
 	return degrees * (sysMath.Pi / 180.0)
@@ -27,6 +30,7 @@ func ToRadians(degrees float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// WrapPI wraps a radian angle to the range [-pi, pi].
 func WrapPI(angle float64) float64 {
 
 	const twoPi = 2 * sysMath.Pi
@@ -41,6 +45,7 @@ func WrapPI(angle float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// WrapTwoPI wraps a radian angle to the range [0, 2*pi].
 func WrapTwoPI(angle float64) float64 {
 
 	const twoPi = 2 * sysMath.Pi
@@ -55,6 +60,7 @@ func WrapTwoPI(angle float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Wrap180 wraps a degree angle to the range [-180, 180].
 func Wrap180(angle float64) float64 {
 
 	angle = sysMath.Mod(angle+180, 360)
@@ -67,6 +73,7 @@ func Wrap180(angle float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Wrap360 wraps a degree angle to the range [0, 360].
 func Wrap360(angle float64) float64 {
 
 	angle = sysMath.Mod(angle, 360)
@@ -79,6 +86,7 @@ func Wrap360(angle float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Distance returns the absolute distance between two values.
 func Distance(value1, value2 float64) float64 {
 
 	return sysMath.Abs(value1 - value2)
@@ -86,6 +94,7 @@ func Distance(value1, value2 float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Clamp restricts a value to the specified range.
 func Clamp(value, min, max float64) float64 {
 
 	if value > max {
@@ -101,6 +110,7 @@ func Clamp(value, min, max float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Lerp performs linear interpolation between two values.
 func Lerp(value1, value2, amount float64) float64 {
 
 	return value1 + (value2-value1)*amount
@@ -108,6 +118,8 @@ func Lerp(value1, value2, amount float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SmoothStep performs Hermite interpolation between two values with
+// smoothing at the edges. The amount is clamped to the range [0, 1].
 func SmoothStep(value1, value2, amount float64) float64 {
 
 	amount = Clamp(amount, 0, 1)
@@ -118,6 +130,9 @@ func SmoothStep(value1, value2, amount float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// IsAngleEqual returns whether the target angle is within the
+// specified tolerance of the source angle in degrees. Handles
+// circular wrapping across the 0/360 boundary.
 func IsAngleEqual(source, target, tolerance float64) bool {
 
 	angle := sysMath.Mod(360+sysMath.Mod(target, 360), 360)
@@ -133,6 +148,9 @@ func IsAngleEqual(source, target, tolerance float64) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// IsInsideSlice returns whether the point (tx, ty) falls
+// within a directional cone originating from (sx, sy) with
+// the given direction and angular size in degrees.
 func IsInsideSlice(sx, sy, dir, size, tx, ty float64) bool {
 
 	// If full circle
@@ -151,6 +169,8 @@ func IsInsideSlice(sx, sy, dir, size, tx, ty float64) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ComputePitchYaw computes pitch and yaw angles in degrees from a source
+// position to a target position.
 func ComputePitchYaw(
 	sx, sy, sz float64,
 	tx, ty, tz float64,
@@ -171,6 +191,9 @@ func ComputePitchYaw(
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ProjectPoint projects a 3D world position onto 2D screen
+// coordinates using the given view-projection transform.
+// Returns the screen position and whether it is visible.
 func ProjectPoint(
 	transform Matrix,
 	x, y, z float64,
@@ -203,6 +226,8 @@ func ProjectPoint(
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// CastRay performs a ray-sphere intersection test and returns the distance to
+// the nearest hit point. Returns `math.MaxFloat64` if no intersection occurs.
 func CastRay(origin, target, direction Vector3, radius float64) float64 {
 
 	// https://www.ccs.neu.edu/home/fell/CS4300/Lectures/Ray-TracingFormulas.pdf

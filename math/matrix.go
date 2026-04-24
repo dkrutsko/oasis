@@ -13,7 +13,10 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 var (
-	MatrixZero     = Matrix{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	// MatrixZero represents a matrix with all elements set to zero.
+	MatrixZero = Matrix{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+
+	// MatrixIdentity represents the identity matrix.
 	MatrixIdentity = Matrix{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
 )
 
@@ -23,6 +26,7 @@ var (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Matrix represents a 4x4 transformation matrix stored in row-major order.
 type Matrix struct {
 	M11, M12, M13, M14 float64
 	M21, M22, M23, M24 float64
@@ -36,6 +40,7 @@ type Matrix struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// String returns the string representation of the matrix.
 func (m Matrix) String() string {
 
 	return fmt.Sprintf(
@@ -54,6 +59,7 @@ func (m Matrix) String() string {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// IsZero returns whether all elements are zero.
 func (m Matrix) IsZero() bool {
 
 	return m.M11 == 0 &&
@@ -79,6 +85,7 @@ func (m Matrix) IsZero() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Transpose returns the transpose of the matrix.
 func (m Matrix) Transpose() Matrix {
 
 	return Matrix{
@@ -91,6 +98,7 @@ func (m Matrix) Transpose() Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Invert returns the inverse of the matrix and `MatrixZero` if it's singular.
 func (m Matrix) Invert() Matrix {
 
 	v01 := m.M11*m.M22 - m.M12*m.M21
@@ -137,6 +145,7 @@ func (m Matrix) Invert() Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Determinant returns the determinant of the matrix.
 func (m Matrix) Determinant() float64 {
 
 	v1 := m.M33*m.M44 - m.M34*m.M43
@@ -154,6 +163,7 @@ func (m Matrix) Determinant() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetUp returns the up direction vector from row 2.
 func (m Matrix) GetUp() Vector3 {
 
 	return Vector3{m.M21, m.M22, m.M23}
@@ -161,6 +171,7 @@ func (m Matrix) GetUp() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SetUp returns the matrix with row 2 set to the given direction vector.
 func (m Matrix) SetUp(value Vector3) Matrix {
 
 	m.M21 = value.X
@@ -171,6 +182,7 @@ func (m Matrix) SetUp(value Vector3) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetDown returns the down direction vector from row 2.
 func (m Matrix) GetDown() Vector3 {
 
 	return Vector3{-m.M21, -m.M22, -m.M23}
@@ -178,6 +190,7 @@ func (m Matrix) GetDown() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SetDown returns the matrix with row 2 set to the negated direction vector.
 func (m Matrix) SetDown(value Vector3) Matrix {
 
 	m.M21 = -value.X
@@ -188,6 +201,7 @@ func (m Matrix) SetDown(value Vector3) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetRight returns the right direction vector from row 1.
 func (m Matrix) GetRight() Vector3 {
 
 	return Vector3{m.M11, m.M12, m.M13}
@@ -195,6 +209,7 @@ func (m Matrix) GetRight() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SetRight returns the matrix with row 1 set to the given direction vector.
 func (m Matrix) SetRight(value Vector3) Matrix {
 
 	m.M11 = value.X
@@ -205,6 +220,7 @@ func (m Matrix) SetRight(value Vector3) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetLeft returns the left direction vector from row 1.
 func (m Matrix) GetLeft() Vector3 {
 
 	return Vector3{-m.M11, -m.M12, -m.M13}
@@ -212,6 +228,7 @@ func (m Matrix) GetLeft() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SetLeft returns the matrix with row 1 set to the negated direction vector.
 func (m Matrix) SetLeft(value Vector3) Matrix {
 
 	m.M11 = -value.X
@@ -222,6 +239,8 @@ func (m Matrix) SetLeft(value Vector3) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetForward returns the forward direction vector from row 3, negated for
+// right-handed coordinates.
 func (m Matrix) GetForward() Vector3 {
 
 	return Vector3{-m.M31, -m.M32, -m.M33}
@@ -229,6 +248,7 @@ func (m Matrix) GetForward() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SetForward returns the matrix with row 3 set to the negated direction vector.
 func (m Matrix) SetForward(value Vector3) Matrix {
 
 	m.M31 = -value.X
@@ -239,6 +259,7 @@ func (m Matrix) SetForward(value Vector3) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetBackward returns the backward direction vector from row 3.
 func (m Matrix) GetBackward() Vector3 {
 
 	return Vector3{m.M31, m.M32, m.M33}
@@ -246,6 +267,7 @@ func (m Matrix) GetBackward() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SetBackward returns the matrix with row 3 set to the given direction vector.
 func (m Matrix) SetBackward(value Vector3) Matrix {
 
 	m.M31 = value.X
@@ -256,6 +278,7 @@ func (m Matrix) SetBackward(value Vector3) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetTranslation returns the translation vector from row 4.
 func (m Matrix) GetTranslation() Vector3 {
 
 	return Vector3{m.M41, m.M42, m.M43}
@@ -263,6 +286,7 @@ func (m Matrix) GetTranslation() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SetTranslation returns the matrix with row 4 set to the given translation vector.
 func (m Matrix) SetTranslation(value Vector3) Matrix {
 
 	m.M41 = value.X
@@ -273,6 +297,7 @@ func (m Matrix) SetTranslation(value Vector3) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Lerp performs element-wise linear interpolation toward the target matrix.
 func (m Matrix) Lerp(target Matrix, amount float64) Matrix {
 
 	return Matrix{
@@ -300,6 +325,7 @@ func (m Matrix) Lerp(target Matrix, amount float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToSlice32 returns the elements as a float32 slice in row-major order.
 func (m Matrix) ToSlice32() []float32 {
 
 	return []float32{
@@ -312,6 +338,7 @@ func (m Matrix) ToSlice32() []float32 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToSlice64 returns the elements as a float64 slice in row-major order.
 func (m Matrix) ToSlice64() []float64 {
 
 	return []float64{
@@ -328,6 +355,7 @@ func (m Matrix) ToSlice64() []float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixFromSlice32 creates a Matrix from a float32 slice in row-major order.
 func MatrixFromSlice32(values []float32) (Matrix, error) {
 
 	if len(values) != 16 {
@@ -346,6 +374,7 @@ func MatrixFromSlice32(values []float32) (Matrix, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixFromSlice64 creates a Matrix from a float64 slice in row-major order.
 func MatrixFromSlice64(values []float64) (Matrix, error) {
 
 	if len(values) != 16 {
@@ -364,6 +393,8 @@ func MatrixFromSlice64(values []float64) (Matrix, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateProj creates a perspective projection matrix from the given
+// field of view, viewport dimensions, and near/far clipping planes.
 func MatrixCreateProj(fov float64, width, height int, near, far float64) Matrix {
 
 	// Do parameter check
@@ -391,6 +422,8 @@ func MatrixCreateProj(fov float64, width, height int, near, far float64) Matrix 
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateView creates a view matrix from the camera position, target,
+// and up direction.
 func MatrixCreateView(pos, target, up Vector3) Matrix {
 
 	vz := pos.Sub(target).Normalize()
@@ -409,6 +442,8 @@ func MatrixCreateView(pos, target, up Vector3) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixProject projects a 3D position to screen coordinates using separate
+// model, view, and projection matrices.
 func MatrixProject(pos Vector3, width, height int, model, view, proj Matrix) Vector3 {
 
 	return MatrixProjectWithMvp(pos, width, height, model.Mul(view).Mul(proj))
@@ -416,6 +451,8 @@ func MatrixProject(pos Vector3, width, height int, model, view, proj Matrix) Vec
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixProjectWithMvp projects a 3D position to screen coordinates using a
+// precomputed model-view-projection matrix.
 func MatrixProjectWithMvp(pos Vector3, width, height int, mvp Matrix) Vector3 {
 
 	const minZ = 0.0
@@ -432,6 +469,8 @@ func MatrixProjectWithMvp(pos Vector3, width, height int, mvp Matrix) Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateScale creates a scaling matrix with the given scale factors
+// along each axis.
 func MatrixCreateScale(x, y, z float64) Matrix {
 
 	return Matrix{
@@ -444,6 +483,8 @@ func MatrixCreateScale(x, y, z float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateRotationX creates a rotation matrix around the x-axis by the
+// given angle in radians.
 func MatrixCreateRotationX(radians float64) Matrix {
 
 	c := sysMath.Cos(radians)
@@ -459,6 +500,8 @@ func MatrixCreateRotationX(radians float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateRotationY creates a rotation matrix around the y-axis by the
+// given angle in radians.
 func MatrixCreateRotationY(radians float64) Matrix {
 
 	c := sysMath.Cos(radians)
@@ -474,6 +517,8 @@ func MatrixCreateRotationY(radians float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateRotationZ creates a rotation matrix around the z-axis by the
+// given angle in radians.
 func MatrixCreateRotationZ(radians float64) Matrix {
 
 	c := sysMath.Cos(radians)
@@ -489,6 +534,8 @@ func MatrixCreateRotationZ(radians float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateTranslation creates a translation matrix with the given offsets
+// along each axis.
 func MatrixCreateTranslation(x, y, z float64) Matrix {
 
 	return Matrix{
@@ -501,6 +548,8 @@ func MatrixCreateTranslation(x, y, z float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateFromAxisAngle creates a rotation matrix from an arbitrary axis
+// and angle in radians.
 func MatrixCreateFromAxisAngle(axis Vector3, angle float64) Matrix {
 
 	x := axis.X
@@ -527,6 +576,8 @@ func MatrixCreateFromAxisAngle(axis Vector3, angle float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateFromYawPitchRoll creates a rotation matrix from yaw, pitch,
+// and roll angles in radians. Applies rotations in the order Y * X * Z.
 func MatrixCreateFromYawPitchRoll(yaw, pitch, roll float64) Matrix {
 
 	return MatrixCreateRotationY(yaw).
@@ -540,6 +591,7 @@ func MatrixCreateFromYawPitchRoll(yaw, pitch, roll float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Add returns the element-wise sum of two matrices.
 func (m Matrix) Add(value Matrix) Matrix {
 
 	return Matrix{
@@ -567,6 +619,7 @@ func (m Matrix) Add(value Matrix) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Sub returns the element-wise difference of two matrices.
 func (m Matrix) Sub(value Matrix) Matrix {
 
 	return Matrix{
@@ -594,6 +647,7 @@ func (m Matrix) Sub(value Matrix) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Mul returns the matrix product of two matrices.
 func (m Matrix) Mul(value Matrix) Matrix {
 
 	return Matrix{
@@ -621,6 +675,7 @@ func (m Matrix) Mul(value Matrix) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Div returns the element-wise quotient of two matrices.
 func (m Matrix) Div(value Matrix) Matrix {
 
 	return Matrix{
@@ -648,6 +703,7 @@ func (m Matrix) Div(value Matrix) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// AddScalar adds a scalar to each element.
 func (m Matrix) AddScalar(scalar float64) Matrix {
 
 	return Matrix{
@@ -675,6 +731,7 @@ func (m Matrix) AddScalar(scalar float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// SubScalar subtracts a scalar from each element.
 func (m Matrix) SubScalar(scalar float64) Matrix {
 
 	return Matrix{
@@ -702,6 +759,7 @@ func (m Matrix) SubScalar(scalar float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MulScalar multiplies each element by a scalar.
 func (m Matrix) MulScalar(scalar float64) Matrix {
 
 	return Matrix{
@@ -729,6 +787,7 @@ func (m Matrix) MulScalar(scalar float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// DivScalar divides each element by a scalar.
 func (m Matrix) DivScalar(scalar float64) Matrix {
 
 	return Matrix{
@@ -756,6 +815,7 @@ func (m Matrix) DivScalar(scalar float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Neg returns the negation of the matrix.
 func (m Matrix) Neg() Matrix {
 
 	return Matrix{
@@ -768,6 +828,7 @@ func (m Matrix) Neg() Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Eq returns whether all elements are equal.
 func (m Matrix) Eq(value Matrix) bool {
 
 	return m.M11 == value.M11 &&
@@ -793,6 +854,7 @@ func (m Matrix) Eq(value Matrix) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Ne returns whether any element is not equal.
 func (m Matrix) Ne(value Matrix) bool {
 
 	return m.M11 != value.M11 ||
