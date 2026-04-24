@@ -171,11 +171,11 @@ func (q Quaternion) Slerp(target Quaternion, amount float64) Quaternion {
 		}
 
 	} else {
-		sin := sysMath.Acos(dot)
-		sin := 1.0 / sysMath.Sin(sin)
+		cos := sysMath.Acos(dot)
+		sin := 1.0 / sysMath.Sin(cos)
 
-		a = sysMath.Sin((1-amount)*sin) * sin
-		b = sysMath.Sin(amount*sin) * sin
+		a = sysMath.Sin((1-amount)*cos) * sin
+		b = sysMath.Sin(amount*cos) * sin
 		if negative {
 			b = -b
 		}

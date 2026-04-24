@@ -548,6 +548,29 @@ func MatrixCreateTranslation(x, y, z float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// MatrixCreateFromQuaternion creates a rotation matrix from the given quaternion.
+func MatrixCreateFromQuaternion(q Quaternion) Matrix {
+
+	xx := q.X * q.X
+	yy := q.Y * q.Y
+	zz := q.Z * q.Z
+	xy := q.X * q.Y
+	zw := q.Z * q.W
+	zx := q.Z * q.X
+	yw := q.Y * q.W
+	yz := q.Y * q.Z
+	xw := q.X * q.W
+
+	return Matrix{
+		1 - 2*(yy+zz), 2 * (xy + zw), 2 * (zx - yw), 0,
+		2 * (xy - zw), 1 - 2*(zz+xx), 2 * (yz + xw), 0,
+		2 * (zx + yw), 2 * (yz - xw), 1 - 2*(xx+yy), 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // MatrixCreateFromAxisAngle creates a rotation matrix from an arbitrary axis
 // and angle in radians.
 func MatrixCreateFromAxisAngle(axis Vector3, angle float64) Matrix {
