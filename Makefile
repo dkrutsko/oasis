@@ -63,7 +63,39 @@ clean:
 ## Publish                                                                    ##
 ##----------------------------------------------------------------------------##
 
-.PHONY: publish
+.PHONY: _publish_darwin_amd64 _publish_darwin_arm64 _publish_darwin_universal _publish_linux_amd64 _publish_linux_arm64 _publish_windows_amd64 publish
+
+_publish_darwin_amd64:
+	env GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS) -s -w" -o "$(OUTPUT)$(BINARY)_darwin_amd64/$(BINARY)"
+
+_publish_darwin_arm64:
+	env GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS) -s -w" -o "$(OUTPUT)$(BINARY)_darwin_arm64/$(BINARY)"
+
+_publish_darwin_universal:
+	# Create universal binary using the lipo tool
+	mkdir -p "$(OUTPUT)$(BINARY)_darwin_universal"
+	lipo -create -output "$(OUTPUT)$(BINARY)_darwin_universal/$(BINARY)" \
+		"$(OUTPUT)$(BINARY)_darwin_amd64/$(BINARY)" \
+		"$(OUTPUT)$(BINARY)_darwin_arm64/$(BINARY)"
+	tar -czf "$(OUTPUT)$(BINARY)_darwin_universal.tar.gz" -C "$(OUTPUT)" "$(BINARY)_darwin_universal"
+
+_publish_linux_amd64:
+	env GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS) -s -w" -o "$(OUTPUT)$(BINARY)_linux_amd64/$(BINARY)"
+	tar -czf "$(OUTPUT)$(BINARY)_linux_amd64.tar.gz" -C "$(OUTPUT)" "$(BINARY)_linux_amd64"
+
+_publish_linux_arm64:
+	env GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS) -s -w" -o "$(OUTPUT)$(BINARY)_linux_arm64/$(BINARY)"
+	tar -czf "$(OUTPUT)$(BINARY)_linux_arm64.tar.gz" -C "$(OUTPUT)" "$(BINARY)_linux_arm64"
+
+_publish_windows_amd64:
+	env GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS) -s -w" -o "$(OUTPUT)$(BINARY)_windows_amd64/$(BINARY).exe"
+	cd "$(OUTPUT)" && zip -r "$(BINARY)_windows_amd64.zip" "$(BINARY)_windows_amd64"
 
 publish: clean
-	env GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS) -s -w" -o "$(OUTPUT)$(BINARY).exe"
+	$(MAKE) _publish_darwin_amd64 &
+	$(MAKE) _publish_darwin_arm64 &
+	$(MAKE) _publish_linux_amd64 &
+	$(MAKE) _publish_linux_arm64 &
+	$(MAKE) _publish_windows_amd64 &
+	wait
+	$(MAKE) _publish_darwin_universal

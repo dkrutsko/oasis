@@ -29,6 +29,10 @@ go mod tidy
 printf -- "\n\e[1;32mFormatting Go code\e[0m\n"
 gofmt -s -w .
 
+# Run static analysis checks on all Go packages
+printf -- "\n\e[1;32mRunning static analysis\e[0m\n"
+go vet ./...
+
 ##----------------------------------------------------------------------------##
 
 } # Ensures the entire script is downloaded
