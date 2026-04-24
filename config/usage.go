@@ -6,9 +6,11 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Usage prints command-line help for this app.
 func Usage() {
 
-	fmt.Println(`
+	fmt.Print(
+		`
 SUMMARY
 -------
 DOCS:
@@ -17,19 +19,14 @@ Repository: https://github.com/dkrutsko/oasis
 
 ARGUMENTS
 ---------
-  -debug (false) - bool
-   DOCS:
+	-version (false) - boolean
+	 Print the version and exit.
 
-  -json (false) - bool
-   DOCS:
+	-json (false) - boolean
+	 Format log output as JSON lines.
 
-  -version (false) - bool
-   DOCS:
-
-  -addr ("localhost") - string
-   DOCS:
-
-  -port (8080) - uint
-   DOCS:
-`)
+	-debug (false) - boolean
+	 Whether to output extended logging information for debugging.
+`,
+	)
 }

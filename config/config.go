@@ -1,75 +1,104 @@
 package config
 
 import (
+	"context"
 	"flag"
+	"net/url"
+	"os"
 	"sync"
+	"time"
+
+	"github.com/dkrutsko/oasis/errors"
+	"github.com/dkrutsko/oasis/utility"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Config holds all parsed command-line options for the application.
 type Config struct {
-	Debug   bool
-	Json    bool
+	// Prints the version and exits without further processing.
 	Version bool
-	Addr    string
-	Port    uint
+
+	// Enables JSON-formatted output for structured logging.
+	Json bool
+
+	// Enables verbose debug logging.
+	Debug bool
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 var (
-	instance     *Config
-	instanceLock sync.Mutex
+	configInstance     *Config
+	configInstanceLock sync.RWMutex
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func LoadConfig() error {
+// LoadConfig parses command-line arguments and returns the resulting `Config`.
+// It is thread-safe and caches the result on success so subsequent calls
+// return the same instance. When an error occurs, a partially filled `Config`
+// is returned. If `Version` is true the config is considered valid and further
+// parsing is skipped.
+func LoadConfig() (*Config, error) {
 
 	//----------------------------------------------------------------------------//
 
-	// If already loaded
-	// Without using lock
-	if instance != nil {
-		return nil
-	}
+	// Ensure synchronization
+	configInstanceLock.Lock()
+	defer configInstanceLock.Unlock()
 
-	// Lock when loading
-	instanceLock.Lock()
-	defer instanceLock.Unlock()
-
-	// If already loaded
-	if instance != nil {
-		return nil
+	// Check if already loaded
+	if configInstance != nil {
+		return configInstance, nil
 	}
 
 	result := &Config{}
 
 	//----------------------------------------------------------------------------//
 
+	flagSet := flag.NewFlagSet("", flag.ContinueOnError)
+
 	// Define command-line arguments
-	flag.BoolVar(&result.Debug, "debug", false, "")
-	flag.BoolVar(&result.Json, "json", false, "")
-	flag.BoolVar(&result.Version, "version", false, "")
-	flag.StringVar(&result.Addr, "addr", "localhost", "")
-	flag.UintVar(&result.Port, "port", 8080, "")
+	flagSet.BoolVar(&result.Version, "version", false, "")
+	flagSet.BoolVar(&result.Json, "json", false, "")
+	flagSet.BoolVar(&result.Debug, "debug", false, "")
 
 	// Use custom output for usage
-	flag.Usage = Usage
+	flagSet.Usage = Usage
 
 	// Parse command-line arguments
-	flag.Parse()
+	err := flagSet.Parse(os.Args[1:])
+	if err != nil {
+		return result, errors.New(
+			"failed to parse arguments",
+			errors.Error("error", err),
+		)
+	}
+
+	// Only show version
+	if result.Version {
+		configInstance = result
+		return result, nil
+	}
 
 	//----------------------------------------------------------------------------//
 
-	instance = result
-	return nil
+	configInstance = result
+	return result, nil
 
 	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetConfig returns the cached `Config`, or nil if `LoadConfig` has not
+// yet completed successfully.
 func GetConfig() *Config {
-	return instance
+
+	// Ensure synchronization
+	configInstanceLock.RLock()
+	defer configInstanceLock.RUnlock()
+
+	return configInstance
 }
