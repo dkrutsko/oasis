@@ -68,22 +68,6 @@ func (o RotationOrderType) String() string {
 	}
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether the rotation orders are equal.
-func (o RotationOrderType) Eq(value RotationOrderType) bool {
-
-	return o == value
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether the rotation orders are not equal.
-func (o RotationOrderType) Ne(value RotationOrderType) bool {
-
-	return o != value
-}
-
 //----------------------------------------------------------------------------//
 // Types                                                                      //
 //----------------------------------------------------------------------------//
@@ -310,22 +294,3 @@ func EulerFromQuaternion(q Quaternion, order RotationOrderType) Euler {
 	return EulerFromRotationMatrix(q.ToMatrix4(), order)
 }
 
-//----------------------------------------------------------------------------//
-// Operators                                                                  //
-//----------------------------------------------------------------------------//
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether all angles and the order are equal.
-func (e Euler) Eq(value Euler) bool {
-
-	return e.X == value.X && e.Y == value.Y && e.Z == value.Z && e.Order == value.Order
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether any angle or the order is not equal.
-func (e Euler) Ne(value Euler) bool {
-
-	return e.X != value.X || e.Y != value.Y || e.Z != value.Z || e.Order != value.Order
-}

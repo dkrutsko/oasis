@@ -444,22 +444,3 @@ func BoundsFromPointSize(point Point, size Size) Bounds {
 	return Bounds{point.X, point.Y, size.W, size.H}
 }
 
-//----------------------------------------------------------------------------//
-// Operators                                                                  //
-//----------------------------------------------------------------------------//
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether the bounds are equal.
-func (bn Bounds) Eq(value Bounds) bool {
-
-	return bn.X == value.X && bn.Y == value.Y && bn.W == value.W && bn.H == value.H
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether the bounds are not equal.
-func (bn Bounds) Ne(value Bounds) bool {
-
-	return bn.X != value.X || bn.Y != value.Y || bn.W != value.W || bn.H != value.H
-}

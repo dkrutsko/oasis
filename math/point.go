@@ -91,18 +91,3 @@ func (p Point) Neg() Point {
 	return Point{-p.X, -p.Y}
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether the points are equal.
-func (p Point) Eq(value Point) bool {
-
-	return p.X == value.X && p.Y == value.Y
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether the points are not equal.
-func (p Point) Ne(value Point) bool {
-
-	return p.X != value.X || p.Y != value.Y
-}

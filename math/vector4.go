@@ -606,18 +606,3 @@ func (v Vector4) Ge(value Vector4) bool {
 	return v.Compare(value) >= 0
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether all components are equal.
-func (v Vector4) Eq(value Vector4) bool {
-
-	return v.X == value.X && v.Y == value.Y && v.Z == value.Z && v.W == value.W
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether any component is not equal.
-func (v Vector4) Ne(value Vector4) bool {
-
-	return v.X != value.X || v.Y != value.Y || v.Z != value.Z || v.W != value.W
-}

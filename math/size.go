@@ -91,18 +91,3 @@ func (s Size) Sub(value Size) Size {
 	return Size{s.W - value.W, s.H - value.H}
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether the sizes are equal.
-func (s Size) Eq(value Size) bool {
-
-	return s.W == value.W && s.H == value.H
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether the sizes are not equal.
-func (s Size) Ne(value Size) bool {
-
-	return s.W != value.W || s.H != value.H
-}

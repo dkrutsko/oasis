@@ -411,38 +411,3 @@ func (m Matrix3) Neg() Matrix3 {
 	}
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether all elements are equal.
-func (m Matrix3) Eq(value Matrix3) bool {
-
-	return m.M11 == value.M11 &&
-		m.M12 == value.M12 &&
-		m.M13 == value.M13 &&
-
-		m.M21 == value.M21 &&
-		m.M22 == value.M22 &&
-		m.M23 == value.M23 &&
-
-		m.M31 == value.M31 &&
-		m.M32 == value.M32 &&
-		m.M33 == value.M33
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether any element is not equal.
-func (m Matrix3) Ne(value Matrix3) bool {
-
-	return m.M11 != value.M11 ||
-		m.M12 != value.M12 ||
-		m.M13 != value.M13 ||
-
-		m.M21 != value.M21 ||
-		m.M22 != value.M22 ||
-		m.M23 != value.M23 ||
-
-		m.M31 != value.M31 ||
-		m.M32 != value.M32 ||
-		m.M33 != value.M33
-}

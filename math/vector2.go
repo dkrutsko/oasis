@@ -502,18 +502,3 @@ func (v Vector2) Ge(value Vector2) bool {
 	return v.Compare(value) >= 0
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether all components are equal.
-func (v Vector2) Eq(value Vector2) bool {
-
-	return v.X == value.X && v.Y == value.Y
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether any component is not equal.
-func (v Vector2) Ne(value Vector2) bool {
-
-	return v.X != value.X || v.Y != value.Y
-}

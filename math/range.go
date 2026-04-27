@@ -85,22 +85,3 @@ func (r Range) Contains(value float64, inclusive bool) bool {
 	return value > r.Min && value < r.Max
 }
 
-//----------------------------------------------------------------------------//
-// Operators                                                                  //
-//----------------------------------------------------------------------------//
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether the ranges are equal.
-func (r Range) Eq(value Range) bool {
-
-	return r.Min == value.Min && r.Max == value.Max
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether the ranges are not equal.
-func (r Range) Ne(value Range) bool {
-
-	return r.Min != value.Min || r.Max != value.Max
-}

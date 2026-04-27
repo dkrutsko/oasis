@@ -609,18 +609,3 @@ func (v Vector3) Ge(value Vector3) bool {
 	return v.Compare(value) >= 0
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether all components are equal.
-func (v Vector3) Eq(value Vector3) bool {
-
-	return v.X == value.X && v.Y == value.Y && v.Z == value.Z
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether any component is not equal.
-func (v Vector3) Ne(value Vector3) bool {
-
-	return v.X != value.X || v.Y != value.Y || v.Z != value.Z
-}

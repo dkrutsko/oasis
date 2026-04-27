@@ -650,18 +650,3 @@ func (c Color) DivScalar(scalar float64) Color {
 	return Color{c.R / scalar, c.G / scalar, c.B / scalar, c.A / scalar}
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-// Eq returns whether the colors are equal.
-func (c Color) Eq(value Color) bool {
-
-	return c.R == value.R && c.G == value.G && c.B == value.B && c.A == value.A
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// Ne returns whether the colors are not equal.
-func (c Color) Ne(value Color) bool {
-
-	return c.R != value.R || c.G != value.G || c.B != value.B || c.A != value.A
-}
