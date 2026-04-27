@@ -220,8 +220,9 @@ func (e Euler) ToSlice64() []float64 {
 
 // EulerFromRotationMatrix extracts Euler angles from the upper-left 3x3 of
 // the given rotation matrix using the specified rotation order. The matrix
-// is assumed to contain a pure rotation with no scaling. Returns `EulerZero`
-// if the rotation order is not recognized.
+// is assumed to contain a pure rotation with no scaling. Results will be
+// incorrect if the matrix contains scale or shear. Returns `EulerZero` if
+// the rotation order is not recognized.
 func EulerFromRotationMatrix(matrix Matrix4, order RotationOrderType) Euler {
 
 	var x, y, z float64

@@ -326,8 +326,9 @@ func (m Matrix4) GetScaling() Vector3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetRotation returns the rotation quaternion extracted from the matrix. The
-// scale is divided out before extraction.
+// GetRotation returns the rotation quaternion extracted from the matrix.
+// The scale is divided out before extraction. For pure rotation matrices
+// without scale, use `ToQuaternion` instead.
 func (m Matrix4) GetRotation() Quaternion {
 
 	s := m.GetScaling()
@@ -368,9 +369,10 @@ func (m Matrix4) GetMaxScaleOnAxis() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Decompose extracts the rotation, translation, and scale components from
-// the matrix. If the determinant is negative, the x-axis scale is negated
-// to preserve a valid rotation.
+// Decompose extracts the rotation, translation, and scale components
+// from the matrix. If the determinant is negative, the x-axis scale
+// is negated to preserve a valid rotation. The result is approximate
+// if the matrix contains shear.
 func (m Matrix4) Decompose() (rotation Quaternion, translation Vector3, scale Vector3) {
 
 	sx := sysMath.Sqrt(m.M11*m.M11 + m.M12*m.M12 + m.M13*m.M13)
@@ -445,9 +447,10 @@ func (m Matrix4) ToMatrix3() Matrix3 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// ToQuaternion returns a quaternion from the rotational part of the
-// matrix using a numerically stable trace-based extraction. The
-// matrix is assumed to be a pure rotation with no scaling.
+// ToQuaternion returns a quaternion from the rotational part of the matrix
+// using a numerically stable trace-based extraction. The matrix is assumed
+// to be a pure rotation with no scaling. For matrices that may contain scale,
+// use `GetRotation` instead.
 func (m Matrix4) ToQuaternion() Quaternion {
 
 	trace := m.M11 + m.M22 + m.M33
@@ -498,10 +501,9 @@ func (m Matrix4) ToQuaternion() Quaternion {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// ToNormalMatrix3 computes the normal matrix from this 4x4
-// model-view matrix. This is the inverse transpose of the
-// upper-left 3x3. Returns `Matrix3Zero` if the matrix is
-// singular.
+// ToNormalMatrix3 computes the normal matrix from this 4x4 matrix. This
+// is the inverse transpose of the upper-left 3x3. Returns `Matrix3Zero`
+// if the matrix is singular.
 func (m Matrix4) ToNormalMatrix3() Matrix3 {
 
 	a00 := m.M11

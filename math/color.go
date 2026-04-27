@@ -135,8 +135,9 @@ func (c Color) IsLight() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Lighten returns the color with lightness increased by the given
-// amount in HSL space. An amount of 0.1 increases lightness by 10%.
+// Lighten returns the color with lightness increased by the given amount
+// in HSL space. The amount is added directly to the lightness value, e.g.
+// 0.1 shifts lightness from 0.3 to 0.4.
 func (c Color) Lighten(amount float64) Color {
 
 	h, s, l, a := c.ToHsl()
@@ -146,8 +147,9 @@ func (c Color) Lighten(amount float64) Color {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Darken returns the color with lightness decreased by the given
-// amount in HSL space. An amount of 0.1 decreases lightness by 10%.
+// Darken returns the color with lightness decreased by the given amount
+// in HSL space. The amount is subtracted directly from the lightness value,
+// e.g. 0.1 shifts lightness from 0.4 to 0.3.
 func (c Color) Darken(amount float64) Color {
 
 	h, s, l, a := c.ToHsl()
@@ -157,8 +159,8 @@ func (c Color) Darken(amount float64) Color {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Saturate returns the color with saturation increased by the given
-// amount in HSL space. An amount of 0.1 increases saturation by 10%.
+// Saturate returns the color with saturation increased by the given amount
+// in HSL space. The amount is added directly to the saturation value.
 func (c Color) Saturate(amount float64) Color {
 
 	h, s, l, a := c.ToHsl()
@@ -168,8 +170,8 @@ func (c Color) Saturate(amount float64) Color {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Desaturate returns the color with saturation decreased by the given
-// amount in HSL space. An amount of 0.1 decreases saturation by 10%.
+// Desaturate returns the color with saturation decreased by the given amount
+// in HSL space. The amount is subtracted directly from the saturation value.
 func (c Color) Desaturate(amount float64) Color {
 
 	h, s, l, a := c.ToHsl()

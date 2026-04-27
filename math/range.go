@@ -59,8 +59,9 @@ func (r Range) GetSpan() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetRandom returns a random value within [Min, Max). Returns
-// `Min` if the range has zero or negative span.
+// GetRandom returns a random value within [Min, Max). Uses
+// the global `math/rand` source. Returns `Min` if the range
+// has zero or negative span.
 func (r Range) GetRandom() float64 {
 
 	span := r.Max - r.Min

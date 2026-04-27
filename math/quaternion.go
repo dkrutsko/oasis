@@ -420,8 +420,8 @@ func (q Quaternion) Sub(value Quaternion) Quaternion {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Mul returns the Hamilton product of two quaternions. This is the standard
-// quaternion multiplication used to combine rotations.
+// Mul returns the Hamilton product of two quaternions. This
+// combines the rotations represented by each quaternion.
 func (q Quaternion) Mul(value Quaternion) Quaternion {
 
 	return Quaternion{
