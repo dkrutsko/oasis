@@ -1,7 +1,6 @@
 package math
 
 import (
-	"errors"
 	"fmt"
 	sysMath "math"
 )
@@ -13,11 +12,11 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 var (
-	// MatrixZero represents a matrix with all elements set to zero.
-	MatrixZero = Matrix{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+	// Matrix4Zero represents a matrix with all elements set to zero.
+	Matrix4Zero = Matrix4{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 
-	// MatrixIdentity represents the identity matrix.
-	MatrixIdentity = Matrix{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
+	// Matrix4Identity represents the identity matrix.
+	Matrix4Identity = Matrix4{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
 )
 
 //----------------------------------------------------------------------------//
@@ -26,8 +25,8 @@ var (
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Matrix represents a 4x4 transformation matrix stored in row-major order.
-type Matrix struct {
+// Matrix4 represents a 4x4 transformation matrix stored in row-major order.
+type Matrix4 struct {
 	M11, M12, M13, M14 float64
 	M21, M22, M23, M24 float64
 	M31, M32, M33, M34 float64
@@ -41,7 +40,7 @@ type Matrix struct {
 ////////////////////////////////////////////////////////////////////////////////
 
 // String returns the string representation of the matrix.
-func (m Matrix) String() string {
+func (m Matrix4) String() string {
 
 	return fmt.Sprintf(
 		"["+
@@ -60,7 +59,7 @@ func (m Matrix) String() string {
 ////////////////////////////////////////////////////////////////////////////////
 
 // IsZero returns whether all elements are zero.
-func (m Matrix) IsZero() bool {
+func (m Matrix4) IsZero() bool {
 
 	return m.M11 == 0 &&
 		m.M12 == 0 &&
@@ -86,9 +85,9 @@ func (m Matrix) IsZero() bool {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Transpose returns the transpose of the matrix.
-func (m Matrix) Transpose() Matrix {
+func (m Matrix4) Transpose() Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11, m.M21, m.M31, m.M41,
 		m.M12, m.M22, m.M32, m.M42,
 		m.M13, m.M23, m.M33, m.M43,
@@ -98,8 +97,9 @@ func (m Matrix) Transpose() Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Invert returns the inverse of the matrix and `MatrixZero` if it's singular.
-func (m Matrix) Invert() Matrix {
+// Invert returns the inverse of the matrix. Returns `Matrix4Zero` if the
+// matrix is singular.
+func (m Matrix4) Invert() Matrix4 {
 
 	v01 := m.M11*m.M22 - m.M12*m.M21
 	v02 := m.M11*m.M23 - m.M13*m.M21
@@ -117,10 +117,10 @@ func (m Matrix) Invert() Matrix {
 	det := v01*v12 - v02*v11 + v03*v10 + v04*v09 - v05*v08 + v06*v07
 
 	if det == 0 {
-		return MatrixZero
+		return Matrix4Zero
 	}
 
-	return Matrix{
+	return Matrix4{
 		(+m.M22*v12 - m.M23*v11 + m.M24*v10) / det,
 		(-m.M12*v12 + m.M13*v11 - m.M14*v10) / det,
 		(+m.M42*v06 - m.M43*v05 + m.M44*v04) / det,
@@ -146,7 +146,7 @@ func (m Matrix) Invert() Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Determinant returns the determinant of the matrix.
-func (m Matrix) Determinant() float64 {
+func (m Matrix4) Determinant() float64 {
 
 	v1 := m.M33*m.M44 - m.M34*m.M43
 	v2 := m.M32*m.M44 - m.M34*m.M42
@@ -163,144 +163,251 @@ func (m Matrix) Determinant() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetUp returns the up direction vector from row 2.
-func (m Matrix) GetUp() Vector3 {
+// GetUp returns the up direction vector from the matrix.
+func (m Matrix4) GetUp() Vector3 {
 
 	return Vector3{m.M21, m.M22, m.M23}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// SetUp returns the matrix with row 2 set to the given direction vector.
-func (m Matrix) SetUp(value Vector3) Matrix {
+// SetUp returns the matrix with the up direction set to the given vector.
+func (m Matrix4) SetUp(value Vector3) Matrix4 {
 
-	m.M21 = value.X
-	m.M22 = value.Y
-	m.M23 = value.Z
-	return m
+	return Matrix4{
+		m.M11, m.M12, m.M13, m.M14,
+		value.X, value.Y, value.Z, m.M24,
+		m.M31, m.M32, m.M33, m.M34,
+		m.M41, m.M42, m.M43, m.M44,
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetDown returns the down direction vector from row 2.
-func (m Matrix) GetDown() Vector3 {
+// GetDown returns the down direction vector from the matrix.
+func (m Matrix4) GetDown() Vector3 {
 
 	return Vector3{-m.M21, -m.M22, -m.M23}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// SetDown returns the matrix with row 2 set to the negated direction vector.
-func (m Matrix) SetDown(value Vector3) Matrix {
+// SetDown returns the matrix with the down direction set to the given vector.
+func (m Matrix4) SetDown(value Vector3) Matrix4 {
 
-	m.M21 = -value.X
-	m.M22 = -value.Y
-	m.M23 = -value.Z
-	return m
+	return Matrix4{
+		m.M11, m.M12, m.M13, m.M14,
+		-value.X, -value.Y, -value.Z, m.M24,
+		m.M31, m.M32, m.M33, m.M34,
+		m.M41, m.M42, m.M43, m.M44,
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetRight returns the right direction vector from row 1.
-func (m Matrix) GetRight() Vector3 {
+// GetRight returns the right direction vector from the matrix.
+func (m Matrix4) GetRight() Vector3 {
 
 	return Vector3{m.M11, m.M12, m.M13}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// SetRight returns the matrix with row 1 set to the given direction vector.
-func (m Matrix) SetRight(value Vector3) Matrix {
+// SetRight returns the matrix with the right direction set to the given vector.
+func (m Matrix4) SetRight(value Vector3) Matrix4 {
 
-	m.M11 = value.X
-	m.M12 = value.Y
-	m.M13 = value.Z
-	return m
+	return Matrix4{
+		value.X, value.Y, value.Z, m.M14,
+		m.M21, m.M22, m.M23, m.M24,
+		m.M31, m.M32, m.M33, m.M34,
+		m.M41, m.M42, m.M43, m.M44,
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetLeft returns the left direction vector from row 1.
-func (m Matrix) GetLeft() Vector3 {
+// GetLeft returns the left direction vector from the matrix.
+func (m Matrix4) GetLeft() Vector3 {
 
 	return Vector3{-m.M11, -m.M12, -m.M13}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// SetLeft returns the matrix with row 1 set to the negated direction vector.
-func (m Matrix) SetLeft(value Vector3) Matrix {
+// SetLeft returns the matrix with the left direction set to the given vector.
+func (m Matrix4) SetLeft(value Vector3) Matrix4 {
 
-	m.M11 = -value.X
-	m.M12 = -value.Y
-	m.M13 = -value.Z
-	return m
+	return Matrix4{
+		-value.X, -value.Y, -value.Z, m.M14,
+		m.M21, m.M22, m.M23, m.M24,
+		m.M31, m.M32, m.M33, m.M34,
+		m.M41, m.M42, m.M43, m.M44,
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetForward returns the forward direction vector from row 3, negated for
-// right-handed coordinates.
-func (m Matrix) GetForward() Vector3 {
+// GetForward returns the forward direction vector from the matrix, negated
+// for right-handed coordinates.
+func (m Matrix4) GetForward() Vector3 {
 
 	return Vector3{-m.M31, -m.M32, -m.M33}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// SetForward returns the matrix with row 3 set to the negated direction vector.
-func (m Matrix) SetForward(value Vector3) Matrix {
+// SetForward returns the matrix with the forward direction set to the given
+// vector, negated for right-handed coordinates.
+func (m Matrix4) SetForward(value Vector3) Matrix4 {
 
-	m.M31 = -value.X
-	m.M32 = -value.Y
-	m.M33 = -value.Z
-	return m
+	return Matrix4{
+		m.M11, m.M12, m.M13, m.M14,
+		m.M21, m.M22, m.M23, m.M24,
+		-value.X, -value.Y, -value.Z, m.M34,
+		m.M41, m.M42, m.M43, m.M44,
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetBackward returns the backward direction vector from row 3.
-func (m Matrix) GetBackward() Vector3 {
+// GetBackward returns the backward direction vector from the matrix.
+func (m Matrix4) GetBackward() Vector3 {
 
 	return Vector3{m.M31, m.M32, m.M33}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// SetBackward returns the matrix with row 3 set to the given direction vector.
-func (m Matrix) SetBackward(value Vector3) Matrix {
+// SetBackward returns the matrix with the backward direction set to the given
+// vector.
+func (m Matrix4) SetBackward(value Vector3) Matrix4 {
 
-	m.M31 = value.X
-	m.M32 = value.Y
-	m.M33 = value.Z
-	return m
+	return Matrix4{
+		m.M11, m.M12, m.M13, m.M14,
+		m.M21, m.M22, m.M23, m.M24,
+		value.X, value.Y, value.Z, m.M34,
+		m.M41, m.M42, m.M43, m.M44,
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetTranslation returns the translation vector from row 4.
-func (m Matrix) GetTranslation() Vector3 {
+// GetTranslation returns the translation vector from the matrix.
+func (m Matrix4) GetTranslation() Vector3 {
 
 	return Vector3{m.M41, m.M42, m.M43}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// SetTranslation returns the matrix with row 4 set to the given translation vector.
-func (m Matrix) SetTranslation(value Vector3) Matrix {
+// SetTranslation returns the matrix with the translation set to the given
+// vector.
+func (m Matrix4) SetTranslation(value Vector3) Matrix4 {
 
-	m.M41 = value.X
-	m.M42 = value.Y
-	m.M43 = value.Z
-	return m
+	return Matrix4{
+		m.M11, m.M12, m.M13, m.M14,
+		m.M21, m.M22, m.M23, m.M24,
+		m.M31, m.M32, m.M33, m.M34,
+		value.X, value.Y, value.Z, m.M44,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetScaling returns the scale factors extracted from each basis row.
+func (m Matrix4) GetScaling() Vector3 {
+
+	return Vector3{
+		sysMath.Sqrt(m.M11*m.M11 + m.M12*m.M12 + m.M13*m.M13),
+		sysMath.Sqrt(m.M21*m.M21 + m.M22*m.M22 + m.M23*m.M23),
+		sysMath.Sqrt(m.M31*m.M31 + m.M32*m.M32 + m.M33*m.M33),
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetRotation returns the rotation quaternion extracted from the matrix. The
+// scale is divided out before extraction.
+func (m Matrix4) GetRotation() Quaternion {
+
+	s := m.GetScaling()
+
+	invSX := 1 / s.X
+	invSY := 1 / s.Y
+	invSZ := 1 / s.Z
+
+	rm := Matrix4{
+		m.M11 * invSX, m.M12 * invSX, m.M13 * invSX, 0,
+		m.M21 * invSY, m.M22 * invSY, m.M23 * invSY, 0,
+		m.M31 * invSZ, m.M32 * invSZ, m.M33 * invSZ, 0,
+		0, 0, 0, 1,
+	}
+
+	return rm.ToQuaternion()
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetMaxScaleOnAxis returns the largest scale factor across all three axes.
+func (m Matrix4) GetMaxScaleOnAxis() float64 {
+
+	x := m.M11*m.M11 + m.M12*m.M12 + m.M13*m.M13
+	y := m.M21*m.M21 + m.M22*m.M22 + m.M23*m.M23
+	z := m.M31*m.M31 + m.M32*m.M32 + m.M33*m.M33
+
+	result := x
+	if y > result {
+		result = y
+	}
+	if z > result {
+		result = z
+	}
+
+	return sysMath.Sqrt(result)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Decompose extracts the rotation, translation, and scale components from
+// the matrix. If the determinant is negative, the x-axis scale is negated
+// to preserve a valid rotation.
+func (m Matrix4) Decompose() (rotation Quaternion, translation Vector3, scale Vector3) {
+
+	sx := sysMath.Sqrt(m.M11*m.M11 + m.M12*m.M12 + m.M13*m.M13)
+	sy := sysMath.Sqrt(m.M21*m.M21 + m.M22*m.M22 + m.M23*m.M23)
+	sz := sysMath.Sqrt(m.M31*m.M31 + m.M32*m.M32 + m.M33*m.M33)
+
+	// Flip sign for negative determinant
+	if m.Determinant() < 0 {
+		sx = -sx
+	}
+
+	translation = Vector3{m.M41, m.M42, m.M43}
+	scale = Vector3{sx, sy, sz}
+
+	// Divide out scale to get pure rotation
+	invSX := 1 / sx
+	invSY := 1 / sy
+	invSZ := 1 / sz
+
+	rm := Matrix4{
+		m.M11 * invSX, m.M12 * invSX, m.M13 * invSX, 0,
+		m.M21 * invSY, m.M22 * invSY, m.M23 * invSY, 0,
+		m.M31 * invSZ, m.M32 * invSZ, m.M33 * invSZ, 0,
+		0, 0, 0, 1,
+	}
+
+	rotation = rm.ToQuaternion()
+
+	return rotation, translation, scale
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 // Lerp performs element-wise linear interpolation toward the target matrix.
-func (m Matrix) Lerp(target Matrix, amount float64) Matrix {
+func (m Matrix4) Lerp(target Matrix4, amount float64) Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11 + (target.M11-m.M11)*amount,
 		m.M12 + (target.M12-m.M12)*amount,
 		m.M13 + (target.M13-m.M13)*amount,
@@ -325,8 +432,135 @@ func (m Matrix) Lerp(target Matrix, amount float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToMatrix3 returns a `Matrix3` from the upper-left 3x3 portion
+// of the matrix.
+func (m Matrix4) ToMatrix3() Matrix3 {
+
+	return Matrix3{
+		m.M11, m.M12, m.M13,
+		m.M21, m.M22, m.M23,
+		m.M31, m.M32, m.M33,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToQuaternion returns a quaternion from the rotational part of the
+// matrix using a numerically stable trace-based extraction. The
+// matrix is assumed to be a pure rotation with no scaling.
+func (m Matrix4) ToQuaternion() Quaternion {
+
+	trace := m.M11 + m.M22 + m.M33
+
+	if trace > 0 {
+		s := sysMath.Sqrt(trace + 1)
+		w := s * 0.5
+		s = 0.5 / s
+		return Quaternion{
+			(m.M23 - m.M32) * s,
+			(m.M31 - m.M13) * s,
+			(m.M12 - m.M21) * s,
+			w,
+		}
+	}
+
+	if m.M11 >= m.M22 && m.M11 >= m.M33 {
+		s := sysMath.Sqrt(1 + m.M11 - m.M22 - m.M33)
+		half := 0.5 / s
+		return Quaternion{
+			0.5 * s,
+			(m.M12 + m.M21) * half,
+			(m.M13 + m.M31) * half,
+			(m.M23 - m.M32) * half,
+		}
+	}
+
+	if m.M22 > m.M33 {
+		s := sysMath.Sqrt(1 + m.M22 - m.M11 - m.M33)
+		half := 0.5 / s
+		return Quaternion{
+			(m.M21 + m.M12) * half,
+			0.5 * s,
+			(m.M32 + m.M23) * half,
+			(m.M31 - m.M13) * half,
+		}
+	}
+
+	s := sysMath.Sqrt(1 + m.M33 - m.M11 - m.M22)
+	half := 0.5 / s
+	return Quaternion{
+		(m.M31 + m.M13) * half,
+		(m.M32 + m.M23) * half,
+		0.5 * s,
+		(m.M12 - m.M21) * half,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToNormalMatrix3 computes the normal matrix from this 4x4
+// model-view matrix. This is the inverse transpose of the
+// upper-left 3x3. Returns `Matrix3Zero` if the matrix is
+// singular.
+func (m Matrix4) ToNormalMatrix3() Matrix3 {
+
+	a00 := m.M11
+	a01 := m.M12
+	a02 := m.M13
+	a03 := m.M14
+	a10 := m.M21
+	a11 := m.M22
+	a12 := m.M23
+	a13 := m.M24
+	a20 := m.M31
+	a21 := m.M32
+	a22 := m.M33
+	a23 := m.M34
+	a30 := m.M41
+	a31 := m.M42
+	a32 := m.M43
+	a33 := m.M44
+
+	b00 := a00*a11 - a01*a10
+	b01 := a00*a12 - a02*a10
+	b02 := a00*a13 - a03*a10
+	b03 := a01*a12 - a02*a11
+	b04 := a01*a13 - a03*a11
+	b05 := a02*a13 - a03*a12
+	b06 := a20*a31 - a21*a30
+	b07 := a20*a32 - a22*a30
+	b08 := a20*a33 - a23*a30
+	b09 := a21*a32 - a22*a31
+	b10 := a21*a33 - a23*a31
+	b11 := a22*a33 - a23*a32
+
+	det := b00*b11 - b01*b10 + b02*b09 + b03*b08 - b04*b07 + b05*b06
+
+	if det == 0 {
+		return Matrix3Zero
+	}
+
+	inv := 1 / det
+
+	return Matrix3{
+		(a11*b11 - a12*b10 + a13*b09) * inv,
+		(a12*b08 - a10*b11 - a13*b07) * inv,
+		(a10*b10 - a11*b08 + a13*b06) * inv,
+
+		(a02*b10 - a01*b11 - a03*b09) * inv,
+		(a00*b11 - a02*b08 + a03*b07) * inv,
+		(a01*b08 - a00*b10 - a03*b06) * inv,
+
+		(a31*b05 - a32*b04 + a33*b03) * inv,
+		(a32*b02 - a30*b05 - a33*b01) * inv,
+		(a30*b04 - a31*b02 + a33*b00) * inv,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // ToSlice32 returns the elements as a float32 slice in row-major order.
-func (m Matrix) ToSlice32() []float32 {
+func (m Matrix4) ToSlice32() []float32 {
 
 	return []float32{
 		float32(m.M11), float32(m.M12), float32(m.M13), float32(m.M14),
@@ -339,7 +573,7 @@ func (m Matrix) ToSlice32() []float32 {
 ////////////////////////////////////////////////////////////////////////////////
 
 // ToSlice64 returns the elements as a float64 slice in row-major order.
-func (m Matrix) ToSlice64() []float64 {
+func (m Matrix4) ToSlice64() []float64 {
 
 	return []float64{
 		m.M11, m.M12, m.M13, m.M14,
@@ -355,17 +589,56 @@ func (m Matrix) ToSlice64() []float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// MatrixFromSlice32 creates a Matrix from a float32 slice in row-major order.
-func MatrixFromSlice32(values []float32) (Matrix, error) {
+// Matrix4Compose creates a transformation matrix from a quaternion rotation,
+// translation vector, and scale vector.
+func Matrix4Compose(rotation Quaternion, translation, scale Vector3) Matrix4 {
+
+	x1 := rotation.X
+	y1 := rotation.Y
+	z1 := rotation.Z
+	w1 := rotation.W
+
+	x2 := x1 + x1
+	y2 := y1 + y1
+	z2 := z1 + z1
+
+	xx := x1 * x2
+	xy := x1 * y2
+	xz := x1 * z2
+
+	yy := y1 * y2
+	yz := y1 * z2
+	zz := z1 * z2
+
+	wx := w1 * x2
+	wy := w1 * y2
+	wz := w1 * z2
+
+	sx := scale.X
+	sy := scale.Y
+	sz := scale.Z
+
+	return Matrix4{
+		(1 - (yy + zz)) * sx, (xy + wz) * sx, (xz - wy) * sx, 0,
+		(xy - wz) * sy, (1 - (xx + zz)) * sy, (yz + wx) * sy, 0,
+		(xz + wy) * sz, (yz - wx) * sz, (1 - (xx + yy)) * sz, 0,
+		translation.X, translation.Y, translation.Z, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix4FromSlice32 creates a Matrix4 from a float32 slice in row-major order.
+func Matrix4FromSlice32(values []float32) (Matrix4, error) {
 
 	if len(values) != 16 {
-		return MatrixZero, errors.New("not enough values")
+		return Matrix4Zero, ErrInvalidLength
 	}
 
-	m := Matrix{
-		float64(values[0]),  float64(values[1]),  float64(values[2]),  float64(values[3]),
-		float64(values[4]),  float64(values[5]),  float64(values[6]),  float64(values[7]),
-		float64(values[8]),  float64(values[9]),  float64(values[10]), float64(values[11]),
+	m := Matrix4{
+		float64(values[0]), float64(values[1]), float64(values[2]), float64(values[3]),
+		float64(values[4]), float64(values[5]), float64(values[6]), float64(values[7]),
+		float64(values[8]), float64(values[9]), float64(values[10]), float64(values[11]),
 		float64(values[12]), float64(values[13]), float64(values[14]), float64(values[15]),
 	}
 
@@ -374,17 +647,17 @@ func MatrixFromSlice32(values []float32) (Matrix, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// MatrixFromSlice64 creates a Matrix from a float64 slice in row-major order.
-func MatrixFromSlice64(values []float64) (Matrix, error) {
+// Matrix4FromSlice64 creates a Matrix4 from a float64 slice in row-major order.
+func Matrix4FromSlice64(values []float64) (Matrix4, error) {
 
 	if len(values) != 16 {
-		return MatrixZero, errors.New("not enough values")
+		return Matrix4Zero, ErrInvalidLength
 	}
 
-	m := Matrix{
-		values[0],  values[1],  values[2],  values[3],
-		values[4],  values[5],  values[6],  values[7],
-		values[8],  values[9],  values[10], values[11],
+	m := Matrix4{
+		values[0], values[1], values[2], values[3],
+		values[4], values[5], values[6], values[7],
+		values[8], values[9], values[10], values[11],
 		values[12], values[13], values[14], values[15],
 	}
 
@@ -393,228 +666,9 @@ func MatrixFromSlice64(values []float64) (Matrix, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// MatrixCreateProjection creates a perspective projection matrix from the given
-// field of view, viewport dimensions, and near/far clipping planes.
-func MatrixCreateProjection(fov float64, width, height int, near, far float64) Matrix {
-
-	// Do parameter check
-	if fov <= 0 || fov >= sysMath.Pi || near <= 0 || far <= 0 || near >= far {
-		return MatrixZero
-	}
-
-	w := float64(width)
-	h := float64(height)
-
-	dif := near - far
-	cot := 1 / sysMath.Tan(fov*0.5)
-	asp := cot / (w / h)
-
-	m33 := far / dif
-	m43 := near * far / dif
-
-	return Matrix{
-		asp, 0.0, 0.0, 0.0,
-		0.0, cot, 0.0, 0.0,
-		0.0, 0.0, m33, -1.0,
-		0.0, 0.0, m43, 0.0,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateOrthographic creates an orthographic projection matrix from the
-// given viewport dimensions and near/far clipping planes.
-func MatrixCreateOrthographic(width, height int, near, far float64) Matrix {
-
-	w := float64(width)
-	h := float64(height)
-
-	dif := near - far
-	m11 := 2 / w
-	m22 := 2 / h
-	m33 := 1 / dif
-	m43 := near / dif
-
-	return Matrix{
-		m11, 0.0, 0.0, 0.0,
-		0.0, m22, 0.0, 0.0,
-		0.0, 0.0, m33, 0.0,
-		0.0, 0.0, m43, 1.0,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateView creates a view matrix from the camera position, target,
-// and up direction.
-func MatrixCreateView(pos, target, up Vector3) Matrix {
-
-	vz := pos.Sub(target).Normalize()
-	vx := up.Cross(vz).Normalize()
-	vy := vz.Cross(vx).Normalize()
-
-	return Matrix{
-		vx.X, vy.X, vz.X, 0,
-		vx.Y, vy.Y, vz.Y, 0,
-		vx.Z, vy.Z, vz.Z, 0,
-		-vx.Dot(pos),
-		-vy.Dot(pos),
-		-vz.Dot(pos), 1,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateWorld creates a world transformation matrix from a position,
-// forward direction, and up direction.
-func MatrixCreateWorld(pos, forward, up Vector3) Matrix {
-
-	vz := forward.Neg().Normalize()
-	vx := up.Cross(vz).Normalize()
-	vy := vz.Cross(vx).Normalize()
-
-	return Matrix{
-		vx.X, vx.Y, vx.Z, 0,
-		vy.X, vy.Y, vy.Z, 0,
-		vz.X, vz.Y, vz.Z, 0,
-		pos.X, pos.Y, pos.Z, 1,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixProject projects a 3D position to screen coordinates using separate
-// model, view, and projection matrices.
-func MatrixProject(pos Vector3, width, height int, model, view, proj Matrix) Vector3 {
-
-	return MatrixProjectWithMvp(pos, width, height, model.Mul(view).Mul(proj))
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixProjectWithMvp projects a 3D position to screen coordinates using a
-// precomputed model-view-projection matrix.
-func MatrixProjectWithMvp(pos Vector3, width, height int, mvp Matrix) Vector3 {
-
-	const minZ = 0.0
-	const maxZ = 1.0
-
-	transform := Vector4TransformVector3(mvp, pos)
-
-	return Vector3{
-		(1 + transform.X / transform.W) * float64(width) * 0.5,
-		(1 - transform.Y / transform.W) * float64(height) * 0.5,
-		minZ + (transform.Z / transform.W) * (maxZ - minZ),
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateScale creates a scaling matrix with the given scale factors
-// along each axis.
-func MatrixCreateScale(x, y, z float64) Matrix {
-
-	return Matrix{
-		x, 0, 0, 0,
-		0, y, 0, 0,
-		0, 0, z, 0,
-		0, 0, 0, 1,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateRotationX creates a rotation matrix around the x-axis by the
-// given angle in radians.
-func MatrixCreateRotationX(radians float64) Matrix {
-
-	c := sysMath.Cos(radians)
-	s := sysMath.Sin(radians)
-
-	return Matrix{
-		1, 0, 0, 0,
-		0, c, s, 0,
-		0, -s, c, 0,
-		0, 0, 0, 1,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateRotationY creates a rotation matrix around the y-axis by the
-// given angle in radians.
-func MatrixCreateRotationY(radians float64) Matrix {
-
-	c := sysMath.Cos(radians)
-	s := sysMath.Sin(radians)
-
-	return Matrix{
-		c, 0, -s, 0,
-		0, 1, 0, 0,
-		s, 0, c, 0,
-		0, 0, 0, 1,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateRotationZ creates a rotation matrix around the z-axis by the
-// given angle in radians.
-func MatrixCreateRotationZ(radians float64) Matrix {
-
-	c := sysMath.Cos(radians)
-	s := sysMath.Sin(radians)
-
-	return Matrix{
-		c, s, 0, 0,
-		-s, c, 0, 0,
-		0, 0, 1, 0,
-		0, 0, 0, 1,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateTranslation creates a translation matrix with the given offsets
-// along each axis.
-func MatrixCreateTranslation(x, y, z float64) Matrix {
-
-	return Matrix{
-		1, 0, 0, 0,
-		0, 1, 0, 0,
-		0, 0, 1, 0,
-		x, y, z, 1,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateFromQuaternion creates a rotation matrix from the given quaternion.
-func MatrixCreateFromQuaternion(q Quaternion) Matrix {
-
-	xx := q.X * q.X
-	yy := q.Y * q.Y
-	zz := q.Z * q.Z
-	xy := q.X * q.Y
-	zw := q.Z * q.W
-	zx := q.Z * q.X
-	yw := q.Y * q.W
-	yz := q.Y * q.Z
-	xw := q.X * q.W
-
-	return Matrix{
-		1 - 2*(yy+zz), 2 * (xy + zw), 2 * (zx - yw), 0,
-		2 * (xy - zw), 1 - 2*(zz+xx), 2 * (yz + xw), 0,
-		2 * (zx + yw), 2 * (yz - xw), 1 - 2*(xx+yy), 0,
-		0, 0, 0, 1,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// MatrixCreateFromAxisAngle creates a rotation matrix from an arbitrary axis
+// Matrix4FromAxisAngle creates a rotation matrix from an arbitrary axis
 // and angle in radians.
-func MatrixCreateFromAxisAngle(axis Vector3, angle float64) Matrix {
+func Matrix4FromAxisAngle(axis Vector3, angle float64) Matrix4 {
 
 	x := axis.X
 	y := axis.Y
@@ -630,7 +684,7 @@ func MatrixCreateFromAxisAngle(axis Vector3, angle float64) Matrix {
 	xz := x * z
 	yz := y * z
 
-	return Matrix{
+	return Matrix4{
 		xx + (1-xx)*c, xy - xy*c + z*s, xz - xz*c - y*s, 0,
 		xy - xy*c - z*s, yy + (1-yy)*c, yz - yz*c + x*s, 0,
 		xz - xz*c + y*s, yz - yz*c - x*s, zz + (1-zz)*c, 0,
@@ -640,13 +694,172 @@ func MatrixCreateFromAxisAngle(axis Vector3, angle float64) Matrix {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// MatrixCreateFromYawPitchRoll creates a rotation matrix from yaw, pitch,
-// and roll angles in radians. Applies rotations in the order Y * X * Z.
-func MatrixCreateFromYawPitchRoll(yaw, pitch, roll float64) Matrix {
+// Matrix4CreateProjection creates a perspective projection matrix from the
+// given field of view, viewport dimensions, and near/far clipping planes.
+// Returns `Matrix4Zero` if any parameter is invalid.
+func Matrix4CreateProjection(fov float64, viewport Size, near, far float64) Matrix4 {
 
-	return MatrixCreateRotationY(yaw).
-		Mul(MatrixCreateRotationX(pitch)).
-		Mul(MatrixCreateRotationZ(roll))
+	// Do parameter check
+	if fov <= 0 || fov >= sysMath.Pi || near <= 0 || far <= 0 || near >= far {
+		return Matrix4Zero
+	}
+
+	w := float64(viewport.W)
+	h := float64(viewport.H)
+
+	dif := near - far
+	cot := 1 / sysMath.Tan(fov*0.5)
+	asp := cot / (w / h)
+
+	m33 := far / dif
+	m43 := near * far / dif
+
+	return Matrix4{
+		asp, 0.0, 0.0, 0.0,
+		0.0, cot, 0.0, 0.0,
+		0.0, 0.0, m33, -1.0,
+		0.0, 0.0, m43, 0.0,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix4CreateOrthographic creates an orthographic projection matrix from the
+// given viewport dimensions and near/far clipping planes.
+func Matrix4CreateOrthographic(viewport Size, near, far float64) Matrix4 {
+
+	w := float64(viewport.W)
+	h := float64(viewport.H)
+
+	dif := near - far
+	m11 := 2 / w
+	m22 := 2 / h
+	m33 := 1 / dif
+	m43 := near / dif
+
+	return Matrix4{
+		m11, 0.0, 0.0, 0.0,
+		0.0, m22, 0.0, 0.0,
+		0.0, 0.0, m33, 0.0,
+		0.0, 0.0, m43, 1.0,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix4CreateView creates a view matrix from the camera position, target,
+// and up direction.
+func Matrix4CreateView(pos, target, up Vector3) Matrix4 {
+
+	vz := pos.Sub(target).Normalize()
+	vx := up.Cross(vz).Normalize()
+	vy := vz.Cross(vx).Normalize()
+
+	return Matrix4{
+		vx.X, vy.X, vz.X, 0,
+		vx.Y, vy.Y, vz.Y, 0,
+		vx.Z, vy.Z, vz.Z, 0,
+		-vx.Dot(pos),
+		-vy.Dot(pos),
+		-vz.Dot(pos), 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix4CreateWorld creates a world transformation matrix from a position,
+// forward direction, and up direction.
+func Matrix4CreateWorld(pos, forward, up Vector3) Matrix4 {
+
+	vz := forward.Neg().Normalize()
+	vx := up.Cross(vz).Normalize()
+	vy := vz.Cross(vx).Normalize()
+
+	return Matrix4{
+		vx.X, vx.Y, vx.Z, 0,
+		vy.X, vy.Y, vy.Z, 0,
+		vz.X, vz.Y, vz.Z, 0,
+		pos.X, pos.Y, pos.Z, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix4CreateScale creates a scaling matrix with the given scale factors
+// along each axis.
+func Matrix4CreateScale(x, y, z float64) Matrix4 {
+
+	return Matrix4{
+		x, 0, 0, 0,
+		0, y, 0, 0,
+		0, 0, z, 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix4CreateRotationX creates a rotation matrix around the x-axis by the
+// given angle in radians.
+func Matrix4CreateRotationX(radians float64) Matrix4 {
+
+	c := sysMath.Cos(radians)
+	s := sysMath.Sin(radians)
+
+	return Matrix4{
+		1, 0, 0, 0,
+		0, c, s, 0,
+		0, -s, c, 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix4CreateRotationY creates a rotation matrix around the y-axis by the
+// given angle in radians.
+func Matrix4CreateRotationY(radians float64) Matrix4 {
+
+	c := sysMath.Cos(radians)
+	s := sysMath.Sin(radians)
+
+	return Matrix4{
+		c, 0, -s, 0,
+		0, 1, 0, 0,
+		s, 0, c, 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix4CreateRotationZ creates a rotation matrix around the z-axis by the
+// given angle in radians.
+func Matrix4CreateRotationZ(radians float64) Matrix4 {
+
+	c := sysMath.Cos(radians)
+	s := sysMath.Sin(radians)
+
+	return Matrix4{
+		c, s, 0, 0,
+		-s, c, 0, 0,
+		0, 0, 1, 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix4CreateTranslation creates a translation matrix with the given offsets
+// along each axis.
+func Matrix4CreateTranslation(x, y, z float64) Matrix4 {
+
+	return Matrix4{
+		1, 0, 0, 0,
+		0, 1, 0, 0,
+		0, 0, 1, 0,
+		x, y, z, 1,
+	}
 }
 
 //----------------------------------------------------------------------------//
@@ -656,9 +869,9 @@ func MatrixCreateFromYawPitchRoll(yaw, pitch, roll float64) Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Add returns the element-wise sum of two matrices.
-func (m Matrix) Add(value Matrix) Matrix {
+func (m Matrix4) Add(value Matrix4) Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11 + value.M11,
 		m.M12 + value.M12,
 		m.M13 + value.M13,
@@ -684,9 +897,9 @@ func (m Matrix) Add(value Matrix) Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Sub returns the element-wise difference of two matrices.
-func (m Matrix) Sub(value Matrix) Matrix {
+func (m Matrix4) Sub(value Matrix4) Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11 - value.M11,
 		m.M12 - value.M12,
 		m.M13 - value.M13,
@@ -712,9 +925,9 @@ func (m Matrix) Sub(value Matrix) Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Mul returns the matrix product of two matrices.
-func (m Matrix) Mul(value Matrix) Matrix {
+func (m Matrix4) Mul(value Matrix4) Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11*value.M11 + m.M12*value.M21 + m.M13*value.M31 + m.M14*value.M41,
 		m.M11*value.M12 + m.M12*value.M22 + m.M13*value.M32 + m.M14*value.M42,
 		m.M11*value.M13 + m.M12*value.M23 + m.M13*value.M33 + m.M14*value.M43,
@@ -740,9 +953,9 @@ func (m Matrix) Mul(value Matrix) Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Div returns the element-wise quotient of two matrices.
-func (m Matrix) Div(value Matrix) Matrix {
+func (m Matrix4) Div(value Matrix4) Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11 / value.M11,
 		m.M12 / value.M12,
 		m.M13 / value.M13,
@@ -768,9 +981,9 @@ func (m Matrix) Div(value Matrix) Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // AddScalar adds a scalar to each element.
-func (m Matrix) AddScalar(scalar float64) Matrix {
+func (m Matrix4) AddScalar(scalar float64) Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11 + scalar,
 		m.M12 + scalar,
 		m.M13 + scalar,
@@ -796,9 +1009,9 @@ func (m Matrix) AddScalar(scalar float64) Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // SubScalar subtracts a scalar from each element.
-func (m Matrix) SubScalar(scalar float64) Matrix {
+func (m Matrix4) SubScalar(scalar float64) Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11 - scalar,
 		m.M12 - scalar,
 		m.M13 - scalar,
@@ -824,9 +1037,9 @@ func (m Matrix) SubScalar(scalar float64) Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // MulScalar multiplies each element by a scalar.
-func (m Matrix) MulScalar(scalar float64) Matrix {
+func (m Matrix4) MulScalar(scalar float64) Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11 * scalar,
 		m.M12 * scalar,
 		m.M13 * scalar,
@@ -852,9 +1065,9 @@ func (m Matrix) MulScalar(scalar float64) Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // DivScalar divides each element by a scalar.
-func (m Matrix) DivScalar(scalar float64) Matrix {
+func (m Matrix4) DivScalar(scalar float64) Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		m.M11 / scalar,
 		m.M12 / scalar,
 		m.M13 / scalar,
@@ -880,9 +1093,9 @@ func (m Matrix) DivScalar(scalar float64) Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Neg returns the negation of the matrix.
-func (m Matrix) Neg() Matrix {
+func (m Matrix4) Neg() Matrix4 {
 
-	return Matrix{
+	return Matrix4{
 		-m.M11, -m.M12, -m.M13, -m.M14,
 		-m.M21, -m.M22, -m.M23, -m.M24,
 		-m.M31, -m.M32, -m.M33, -m.M34,
@@ -893,7 +1106,7 @@ func (m Matrix) Neg() Matrix {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Eq returns whether all elements are equal.
-func (m Matrix) Eq(value Matrix) bool {
+func (m Matrix4) Eq(value Matrix4) bool {
 
 	return m.M11 == value.M11 &&
 		m.M12 == value.M12 &&
@@ -919,7 +1132,7 @@ func (m Matrix) Eq(value Matrix) bool {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Ne returns whether any element is not equal.
-func (m Matrix) Ne(value Matrix) bool {
+func (m Matrix4) Ne(value Matrix4) bool {
 
 	return m.M11 != value.M11 ||
 		m.M12 != value.M12 ||

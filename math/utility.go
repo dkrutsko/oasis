@@ -1,7 +1,21 @@
 package math
 
 import (
+	"errors"
 	sysMath "math"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+
+var (
+	// ErrInvalidLength is returned by FromSlice constructors when
+	// the input slice does not have the required number of elements.
+	ErrInvalidLength = errors.New("invalid slice length")
+
+	// ErrInvalidHex is returned by `ColorFromHex` when the input
+	// string contains invalid hex characters or has an unsupported
+	// length.
+	ErrInvalidHex = errors.New("invalid hex color")
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -10,6 +24,73 @@ import (
 func IsNanOrInf(value float64) bool {
 
 	return sysMath.IsNaN(value) || sysMath.IsInf(value, 0)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// RoundN rounds a value to the specified number of decimal places.
+func RoundN(value float64, precision int) float64 {
+
+	p := sysMath.Pow(10, float64(precision))
+	return sysMath.Round(value*p) / p
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Distance returns the absolute distance between two values.
+func Distance(value1, value2 float64) float64 {
+
+	return sysMath.Abs(value1 - value2)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Clamp restricts a value to the specified range.
+func Clamp(value, min, max float64) float64 {
+
+	if value > max {
+		return max
+	}
+
+	if value < min {
+		return min
+	}
+
+	return value
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Lerp performs linear interpolation between two values.
+func Lerp(value1, value2, amount float64) float64 {
+
+	return value1 + (value2-value1)*amount
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// InverseLerp returns the normalized position of a value within
+// the range [value1, value2]. Returns 0 when value equals value1
+// and 1 when value equals value2. This is the inverse of `Lerp`.
+func InverseLerp(value1, value2, value float64) float64 {
+
+	if value1 == value2 {
+		return 0
+	}
+
+	return (value - value1) / (value2 - value1)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// SmoothStep performs Hermite interpolation between two values with
+// smoothing at the edges. The amount is clamped to the range [0, 1].
+func SmoothStep(value1, value2, amount float64) float64 {
+
+	amount = Clamp(amount, 0, 1)
+	amount = amount * amount * (3 - 2*amount)
+
+	return value1 + (value2-value1)*amount
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -30,8 +111,8 @@ func ToRadians(degrees float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// WrapPI wraps a radian angle to the range [-pi, pi].
-func WrapPI(angle float64) float64 {
+// WrapPi wraps a radian angle to the range [-pi, pi].
+func WrapPi(angle float64) float64 {
 
 	const twoPi = 2 * sysMath.Pi
 
@@ -45,8 +126,8 @@ func WrapPI(angle float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// WrapTwoPI wraps a radian angle to the range [0, 2*pi].
-func WrapTwoPI(angle float64) float64 {
+// WrapTwoPi wraps a radian angle to the range [0, 2*pi].
+func WrapTwoPi(angle float64) float64 {
 
 	const twoPi = 2 * sysMath.Pi
 
@@ -86,54 +167,30 @@ func Wrap360(angle float64) float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Distance returns the absolute distance between two values.
-func Distance(value1, value2 float64) float64 {
+// IsRadEqual returns whether the target angle is within the
+// specified tolerance of the source angle in radians. Handles
+// circular wrapping across the 0/2*Pi boundary.
+func IsRadEqual(source, target, tolerance float64) bool {
 
-	return sysMath.Abs(value1 - value2)
-}
+	twoPi := 2 * sysMath.Pi
 
-////////////////////////////////////////////////////////////////////////////////
+	angle := sysMath.Mod(twoPi+sysMath.Mod(target, twoPi), twoPi)
+	angleMin := sysMath.Mod(twoPi*1000000+source-tolerance, twoPi)
+	angleMax := sysMath.Mod(twoPi*1000000+source+tolerance, twoPi)
 
-// Clamp restricts a value to the specified range.
-func Clamp(value, min, max float64) float64 {
-
-	if value > max {
-		return max
+	if angleMin < angleMax {
+		return angleMin <= angle && angle <= angleMax
+	} else {
+		return angleMin <= angle || angle <= angleMax
 	}
-
-	if value < min {
-		return min
-	}
-
-	return value
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Lerp performs linear interpolation between two values.
-func Lerp(value1, value2, amount float64) float64 {
-
-	return value1 + (value2-value1)*amount
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// SmoothStep performs Hermite interpolation between two values with
-// smoothing at the edges. The amount is clamped to the range [0, 1].
-func SmoothStep(value1, value2, amount float64) float64 {
-
-	amount = Clamp(amount, 0, 1)
-	amount = amount * amount * (3 - 2*amount)
-
-	return value1 + (value2-value1)*amount
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// IsAngleEqual returns whether the target angle is within the
+// IsDegEqual returns whether the target angle is within the
 // specified tolerance of the source angle in degrees. Handles
 // circular wrapping across the 0/360 boundary.
-func IsAngleEqual(source, target, tolerance float64) bool {
+func IsDegEqual(source, target, tolerance float64) bool {
 
 	angle := sysMath.Mod(360+sysMath.Mod(target, 360), 360)
 	angleMin := sysMath.Mod(3600000+source-tolerance, 360)
@@ -148,10 +205,32 @@ func IsAngleEqual(source, target, tolerance float64) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// IsInsideSlice returns whether the point (tx, ty) falls
-// within a directional cone originating from (sx, sy) with
-// the given direction and angular size in degrees.
-func IsInsideSlice(sx, sy, dir, size, tx, ty float64) bool {
+// IsRadInsideSlice returns whether the target point falls within a
+// directional cone originating from the source point with the given
+// direction and angular size in radians.
+func IsRadInsideSlice(source Vector2, direction, size float64, target Vector2) bool {
+
+	twoPi := 2 * sysMath.Pi
+
+	// If full circle
+	if size == twoPi {
+		return true
+	}
+
+	angle := sysMath.Atan2(
+		target.Y-source.Y,
+		target.X-source.X,
+	)
+
+	return IsRadEqual(direction, angle, size*0.5)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// IsDegInsideSlice returns whether the target point falls within a
+// directional cone originating from the source point with the given
+// direction and angular size in degrees.
+func IsDegInsideSlice(source Vector2, direction, size float64, target Vector2) bool {
 
 	// If full circle
 	if size == 360 {
@@ -160,105 +239,89 @@ func IsInsideSlice(sx, sy, dir, size, tx, ty float64) bool {
 
 	const radToDeg = 180.0 / sysMath.Pi
 
-	// Calculate angle between s-t
-	angle := sysMath.Atan2(ty-sy, tx-sx) * radToDeg
+	angle := sysMath.Atan2(
+		target.Y-source.Y,
+		target.X-source.X,
+	) * radToDeg
 
-	// Determine if angle is equal
-	return IsAngleEqual(dir, angle, size*0.5)
+	return IsDegEqual(direction, angle, size*0.5)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// ComputePitchYaw computes pitch and yaw angles in degrees from a source
-// position to a target position.
-func ComputePitchYaw(
-	sx, sy, sz float64,
-	tx, ty, tz float64,
-) (rx, ry float64) {
+// ComputeRadPitchYaw computes pitch and yaw angles in radians
+// from a source position to a target position. Returns the
+// result as a `Vector2` where X is pitch and Y is yaw.
+func ComputeRadPitchYaw(source, target Vector3) Vector2 {
 
-	dx := sx - tx
-	dy := sy - ty
-	dz := sz - tz
+	dx := source.X - target.X
+	dy := source.Y - target.Y
+	dz := source.Z - target.Z
+	di := sysMath.Sqrt(dx*dx + dy*dy)
+
+	return Vector2{
+		sysMath.Atan2(dz, di),
+		sysMath.Atan2(dy, dx) + sysMath.Pi,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ComputeDegPitchYaw computes pitch and yaw angles in degrees
+// from a source position to a target position. Returns the
+// result as a `Vector2` where X is pitch and Y is yaw.
+func ComputeDegPitchYaw(source, target Vector3) Vector2 {
+
+	dx := source.X - target.X
+	dy := source.Y - target.Y
+	dz := source.Z - target.Z
 	di := sysMath.Sqrt(dx*dx + dy*dy)
 
 	const radToDeg = 180.0 / sysMath.Pi
 
-	rx = sysMath.Atan2(dz, di) * radToDeg
-	ry = sysMath.Atan2(dy, dx)*radToDeg + 180.0
-
-	return rx, ry
+	return Vector2{
+		sysMath.Atan2(dz, di) * radToDeg,
+		sysMath.Atan2(dy, dx)*radToDeg + 180.0,
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// ProjectPoint projects a 3D world position onto 2D screen
-// coordinates using the given view-projection transform.
-// Returns the screen position and whether it is visible.
-func ProjectPoint(
-	transform Matrix,
-	x, y, z float64,
-	width, height int,
-) (screenX, screenY float64, visible bool) {
+// ProjectToScreen projects a 3D position to screen coordinates using
+// separate model, view, and projection matrices. Returns the screen
+// position with depth in Z and whether the point is visible.
+func ProjectToScreen(
+	position Vector3, viewport Size,
+	model, view, projection Matrix4,
+) (result Vector3, visible bool) {
 
-	ww := transform.M41 * x
-	ww += transform.M42 * y
-	ww += transform.M43 * z
-	ww += transform.M44 * 1
-
-	// If visible
-	if ww < 0.01 {
-		return 0, 0, false
-	}
-
-	// Project position on two dimensions
-	xx := (transform.M11*x + transform.M12*y + transform.M13*z + transform.M14) / ww
-	yy := (transform.M21*x + transform.M22*y + transform.M23*z + transform.M24) / ww
-
-	w := float64(width)
-	h := float64(height)
-
-	// Convert to screen coordinates
-	screenX = (xx + 1) * +0.5 * w
-	screenY = (yy - 1) * -0.5 * h
-
-	return screenX, screenY, true
+	return ProjectToScreenMvp(position, viewport, model.Mul(view).Mul(projection))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// CastRay performs a ray-sphere intersection test and returns the distance to
-// the nearest hit point. Returns `math.MaxFloat64` if no intersection occurs.
-func CastRay(origin, target, direction Vector3, radius float64) float64 {
+// ProjectToScreenMvp projects a 3D position to screen coordinates using
+// a precomputed model-view-projection matrix. Returns the screen position
+// with depth in Z and whether the point is visible.
+func ProjectToScreenMvp(
+	position Vector3, viewport Size, mvp Matrix4,
+) (result Vector3, visible bool) {
 
-	// https://www.ccs.neu.edu/home/fell/CS4300/Lectures/Ray-TracingFormulas.pdf
+	const minZ = 0.0
+	const maxZ = 1.0
 
-	a := direction.X * direction.X
-	a += direction.Y * direction.Y
-	a += direction.Z * direction.Z
+	transform := Vector4TransformVector3(mvp, position)
 
-	b := 2 * direction.X * (origin.X - target.X)
-	b += 2 * direction.Y * (origin.Y - target.Y)
-	b += 2 * direction.Z * (origin.Z - target.Z)
-
-	c := origin.X*origin.X + target.X*target.X
-	c += origin.Y*origin.Y + target.Y*target.Y
-	c += origin.Z*origin.Z + target.Z*target.Z
-	c -= 2 * (origin.X*target.X + origin.Y*target.Y + origin.Z*target.Z)
-	c -= radius * radius
-
-	discriminant := b*b - 4*a*c
-
-	// Whether intersected
-	if discriminant >= 0 {
-
-		// Find a location where sphere intersection was made
-		result := (-b - sysMath.Sqrt(discriminant)) / (2 * a)
-
-		// Ensure valid
-		if result >= 0 {
-			return result
-		}
+	if transform.W < 0.01 {
+		return Vector3Zero, false
 	}
 
-	return sysMath.MaxFloat64
+	w := float64(viewport.W)
+	h := float64(viewport.H)
+
+	return Vector3{
+		(1 + transform.X/transform.W) * w * 0.5,
+		(1 - transform.Y/transform.W) * h * 0.5,
+		minZ + (transform.Z/transform.W)*(maxZ-minZ),
+	}, true
 }

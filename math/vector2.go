@@ -1,7 +1,6 @@
 package math
 
 import (
-	"errors"
 	"fmt"
 	sysMath "math"
 )
@@ -60,13 +59,12 @@ func (v Vector2) IsZero() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Normalize returns a unit vector in the same direction. Returns `Vector2Zero`
-// if the magnitude is zero.
+// Normalize returns a unit vector in the same direction. Returns the zero
+// vector if the magnitude is zero.
 func (v Vector2) Normalize() Vector2 {
 
 	magnitude := sysMath.Sqrt(v.X*v.X + v.Y*v.Y)
 
-	// The default case
 	if magnitude == 0 {
 		return Vector2Zero
 	}
@@ -223,6 +221,38 @@ func (v Vector2) LengthSq() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToPoint returns a `Point` with the components truncated to int.
+func (v Vector2) ToPoint() Point {
+
+	return Point{int(v.X), int(v.Y)}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToSize returns a `Size` with the components truncated to int.
+func (v Vector2) ToSize() Size {
+
+	return Size{int(v.X), int(v.Y)}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToVector3 returns a Vector3 with the given Z component.
+func (v Vector2) ToVector3(z float64) Vector3 {
+
+	return Vector3{v.X, v.Y, z}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToVector4 returns a Vector4 with the given Z and W components.
+func (v Vector2) ToVector4(z, w float64) Vector4 {
+
+	return Vector4{v.X, v.Y, z, w}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // ToSlice32 returns the components as a float32 slice.
 func (v Vector2) ToSlice32() []float32 {
 
@@ -253,7 +283,7 @@ func (v Vector2) ToSlice64() []float64 {
 func Vector2FromSlice32(values []float32) (Vector2, error) {
 
 	if len(values) != 2 {
-		return Vector2Zero, errors.New("not enough values")
+		return Vector2Zero, ErrInvalidLength
 	}
 
 	v := Vector2{
@@ -270,7 +300,7 @@ func Vector2FromSlice32(values []float32) (Vector2, error) {
 func Vector2FromSlice64(values []float64) (Vector2, error) {
 
 	if len(values) != 2 {
-		return Vector2Zero, errors.New("not enough values")
+		return Vector2Zero, ErrInvalidLength
 	}
 
 	v := Vector2{
@@ -285,7 +315,7 @@ func Vector2FromSlice64(values []float64) (Vector2, error) {
 
 // Vector2TransformVector2 transforms a Vector2 by a matrix and returns the
 // resulting Vector2.
-func Vector2TransformVector2(matrix Matrix, value Vector2) Vector2 {
+func Vector2TransformVector2(matrix Matrix4, value Vector2) Vector2 {
 
 	return Vector2{
 		matrix.M11*value.X + matrix.M21*value.Y + matrix.M41,
@@ -297,7 +327,7 @@ func Vector2TransformVector2(matrix Matrix, value Vector2) Vector2 {
 
 // Vector2TransformVector3 transforms a Vector3 by a matrix and returns the
 // resulting Vector2.
-func Vector2TransformVector3(matrix Matrix, value Vector3) Vector2 {
+func Vector2TransformVector3(matrix Matrix4, value Vector3) Vector2 {
 
 	return Vector2{
 		matrix.M11*value.X + matrix.M21*value.Y + matrix.M31*value.Z + matrix.M41,
@@ -309,7 +339,7 @@ func Vector2TransformVector3(matrix Matrix, value Vector3) Vector2 {
 
 // Vector2TransformVector4 transforms a Vector4 by a matrix and returns the
 // resulting Vector2.
-func Vector2TransformVector4(matrix Matrix, value Vector4) Vector2 {
+func Vector2TransformVector4(matrix Matrix4, value Vector4) Vector2 {
 
 	return Vector2{
 		matrix.M11*value.X + matrix.M21*value.Y + matrix.M31*value.Z + matrix.M41*value.W,

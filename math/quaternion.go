@@ -1,7 +1,6 @@
 package math
 
 import (
-	"errors"
 	"fmt"
 	sysMath "math"
 )
@@ -64,13 +63,12 @@ func (q Quaternion) IsZero() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Normalize returns the unit quaternion in the same direction. Returns
-// `QuaternionZero` if the magnitude is zero.
+// Normalize returns the unit quaternion in the same direction. Returns the
+// zero quaternion if the magnitude is zero.
 func (q Quaternion) Normalize() Quaternion {
 
 	magnitude := sysMath.Sqrt(q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W)
 
-	// The default case
 	if magnitude == 0 {
 		return QuaternionZero
 	}
@@ -207,6 +205,70 @@ func (q Quaternion) LengthSq() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToVector4 returns a `Vector4` with the same components.
+func (q Quaternion) ToVector4() Vector4 {
+
+	return Vector4{q.X, q.Y, q.Z, q.W}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToMatrix3 returns a 3x3 rotation matrix from the quaternion.
+func (q Quaternion) ToMatrix3() Matrix3 {
+
+	x1 := q.X
+	y1 := q.Y
+	z1 := q.Z
+	w1 := q.W
+
+	x2 := x1 + x1
+	y2 := y1 + y1
+	z2 := z1 + z1
+
+	xx := x1 * x2
+	yx := y1 * x2
+	yy := y1 * y2
+
+	zx := z1 * x2
+	zy := z1 * y2
+	zz := z1 * z2
+
+	wx := w1 * x2
+	wy := w1 * y2
+	wz := w1 * z2
+
+	return Matrix3{
+		1 - yy - zz, yx + wz, zx - wy,
+		yx - wz, 1 - xx - zz, zy + wx,
+		zx + wy, zy - wx, 1 - xx - yy,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToMatrix4 returns a 4x4 rotation matrix from the quaternion.
+func (q Quaternion) ToMatrix4() Matrix4 {
+
+	xx := q.X * q.X
+	yy := q.Y * q.Y
+	zz := q.Z * q.Z
+	xy := q.X * q.Y
+	zw := q.Z * q.W
+	zx := q.Z * q.X
+	yw := q.Y * q.W
+	yz := q.Y * q.Z
+	xw := q.X * q.W
+
+	return Matrix4{
+		1 - 2*(yy+zz), 2 * (xy + zw), 2 * (zx - yw), 0,
+		2 * (xy - zw), 1 - 2*(zz+xx), 2 * (yz + xw), 0,
+		2 * (zx + yw), 2 * (yz - xw), 1 - 2*(xx+yy), 0,
+		0, 0, 0, 1,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // ToSlice32 returns the components as a float32 slice.
 func (q Quaternion) ToSlice32() []float32 {
 
@@ -226,6 +288,21 @@ func (q Quaternion) ToSlice64() []float64 {
 	return []float64{q.X, q.Y, q.Z, q.W}
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+// ToPacked compresses the quaternion into a 64-bit integer. The
+// packed format stores X in the upper 22 bits and Y and Z in 21
+// bits each. The W component is discarded and reconstructed from
+// the unit quaternion constraint when unpacking.
+func (q Quaternion) ToPacked() int64 {
+
+	x := int64(q.X * 2097152.0)
+	y := int64(q.Y * 1048576.0)
+	z := int64(q.Z * 1048576.0)
+
+	return (x << 42) | ((y & 0x1FFFFF) << 21) | (z & 0x1FFFFF)
+}
+
 //----------------------------------------------------------------------------//
 // Static                                                                     //
 //----------------------------------------------------------------------------//
@@ -236,7 +313,7 @@ func (q Quaternion) ToSlice64() []float64 {
 func QuaternionFromSlice32(values []float32) (Quaternion, error) {
 
 	if len(values) != 4 {
-		return QuaternionZero, errors.New("not enough values")
+		return QuaternionZero, ErrInvalidLength
 	}
 
 	q := Quaternion{
@@ -255,7 +332,7 @@ func QuaternionFromSlice32(values []float32) (Quaternion, error) {
 func QuaternionFromSlice64(values []float64) (Quaternion, error) {
 
 	if len(values) != 4 {
-		return QuaternionZero, errors.New("not enough values")
+		return QuaternionZero, ErrInvalidLength
 	}
 
 	q := Quaternion{
@@ -283,85 +360,6 @@ func QuaternionFromAxisAngle(axis Vector3, angle float64) Quaternion {
 		axis.Y * sin,
 		axis.Z * sin,
 		cos,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// QuaternionFromYawPitchRoll creates a quaternion from yaw, pitch, and roll
-// angles in radians.
-func QuaternionFromYawPitchRoll(yaw, pitch, roll float64) Quaternion {
-
-	halfYaw := yaw * 0.5
-	halfPitch := pitch * 0.5
-	halfRoll := roll * 0.5
-
-	ySin := sysMath.Sin(halfYaw)
-	yCos := sysMath.Cos(halfYaw)
-
-	pSin := sysMath.Sin(halfPitch)
-	pCos := sysMath.Cos(halfPitch)
-
-	rSin := sysMath.Sin(halfRoll)
-	rCos := sysMath.Cos(halfRoll)
-
-	return Quaternion{
-		yCos*pSin*rCos + ySin*pCos*rSin,
-		ySin*pCos*rCos - yCos*pSin*rSin,
-		yCos*pCos*rSin - ySin*pSin*rCos,
-		yCos*pCos*rCos + ySin*pSin*rSin,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// QuaternionFromRotationMatrix creates a quaternion from the rotational part
-// of the given matrix using a numerically stable trace-based extraction.
-func QuaternionFromRotationMatrix(matrix Matrix) Quaternion {
-
-	trace := matrix.M11 + matrix.M22 + matrix.M33
-
-	if trace > 0 {
-		s := sysMath.Sqrt(trace + 1)
-		w := s * 0.5
-		s = 0.5 / s
-		return Quaternion{
-			(matrix.M23 - matrix.M32) * s,
-			(matrix.M31 - matrix.M13) * s,
-			(matrix.M12 - matrix.M21) * s,
-			w,
-		}
-	}
-
-	if matrix.M11 >= matrix.M22 && matrix.M11 >= matrix.M33 {
-		s := sysMath.Sqrt(1 + matrix.M11 - matrix.M22 - matrix.M33)
-		half := 0.5 / s
-		return Quaternion{
-			0.5 * s,
-			(matrix.M12 + matrix.M21) * half,
-			(matrix.M13 + matrix.M31) * half,
-			(matrix.M23 - matrix.M32) * half,
-		}
-	}
-
-	if matrix.M22 > matrix.M33 {
-		s := sysMath.Sqrt(1 + matrix.M22 - matrix.M11 - matrix.M33)
-		half := 0.5 / s
-		return Quaternion{
-			(matrix.M21 + matrix.M12) * half,
-			0.5 * s,
-			(matrix.M32 + matrix.M23) * half,
-			(matrix.M31 - matrix.M13) * half,
-		}
-	}
-
-	s := sysMath.Sqrt(1 + matrix.M33 - matrix.M11 - matrix.M22)
-	half := 0.5 / s
-	return Quaternion{
-		(matrix.M31 + matrix.M13) * half,
-		(matrix.M32 + matrix.M23) * half,
-		0.5 * s,
-		(matrix.M12 - matrix.M21) * half,
 	}
 }
 

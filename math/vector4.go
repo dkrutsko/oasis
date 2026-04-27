@@ -1,7 +1,6 @@
 package math
 
 import (
-	"errors"
 	"fmt"
 	sysMath "math"
 )
@@ -72,13 +71,12 @@ func (v Vector4) IsZero() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Normalize returns a unit vector in the same direction. Returns `Vector4Zero`
-// if the magnitude is zero.
+// Normalize returns a unit vector in the same direction. Returns the zero
+// vector if the magnitude is zero.
 func (v Vector4) Normalize() Vector4 {
 
 	magnitude := sysMath.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z + v.W*v.W)
 
-	// The default case
 	if magnitude == 0 {
 		return Vector4Zero
 	}
@@ -281,6 +279,38 @@ func (v Vector4) LengthSq() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToVector2 returns a Vector2 by dropping the Z and W components.
+func (v Vector4) ToVector2() Vector2 {
+
+	return Vector2{v.X, v.Y}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToVector3 returns a Vector3 by dropping the W component.
+func (v Vector4) ToVector3() Vector3 {
+
+	return Vector3{v.X, v.Y, v.Z}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToQuaternion returns a `Quaternion` with the same components.
+func (v Vector4) ToQuaternion() Quaternion {
+
+	return Quaternion{v.X, v.Y, v.Z, v.W}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToColor returns a `Color` with X, Y, Z, W mapped to R, G, B, A.
+func (v Vector4) ToColor() Color {
+
+	return Color{v.X, v.Y, v.Z, v.W}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // ToSlice32 returns the components as a float32 slice.
 func (v Vector4) ToSlice32() []float32 {
 
@@ -315,7 +345,7 @@ func (v Vector4) ToSlice64() []float64 {
 func Vector4FromSlice32(values []float32) (Vector4, error) {
 
 	if len(values) != 4 {
-		return Vector4Zero, errors.New("not enough values")
+		return Vector4Zero, ErrInvalidLength
 	}
 
 	v := Vector4{
@@ -334,7 +364,7 @@ func Vector4FromSlice32(values []float32) (Vector4, error) {
 func Vector4FromSlice64(values []float64) (Vector4, error) {
 
 	if len(values) != 4 {
-		return Vector4Zero, errors.New("not enough values")
+		return Vector4Zero, ErrInvalidLength
 	}
 
 	v := Vector4{
@@ -351,7 +381,7 @@ func Vector4FromSlice64(values []float64) (Vector4, error) {
 
 // Vector4TransformVector2 transforms a Vector2 by a matrix and returns the
 // resulting Vector4.
-func Vector4TransformVector2(matrix Matrix, value Vector2) Vector4 {
+func Vector4TransformVector2(matrix Matrix4, value Vector2) Vector4 {
 
 	return Vector4{
 		matrix.M11*value.X + matrix.M21*value.Y + matrix.M41,
@@ -365,7 +395,7 @@ func Vector4TransformVector2(matrix Matrix, value Vector2) Vector4 {
 
 // Vector4TransformVector3 transforms a Vector3 by a matrix and returns the
 // resulting Vector4.
-func Vector4TransformVector3(matrix Matrix, value Vector3) Vector4 {
+func Vector4TransformVector3(matrix Matrix4, value Vector3) Vector4 {
 
 	return Vector4{
 		matrix.M11*value.X + matrix.M21*value.Y + matrix.M31*value.Z + matrix.M41,
@@ -379,7 +409,7 @@ func Vector4TransformVector3(matrix Matrix, value Vector3) Vector4 {
 
 // Vector4TransformVector4 transforms a Vector4 by a matrix and returns the
 // resulting Vector4.
-func Vector4TransformVector4(matrix Matrix, value Vector4) Vector4 {
+func Vector4TransformVector4(matrix Matrix4, value Vector4) Vector4 {
 
 	return Vector4{
 		matrix.M11*value.X + matrix.M21*value.Y + matrix.M31*value.Z + matrix.M41*value.W,

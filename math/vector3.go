@@ -1,7 +1,6 @@
 package math
 
 import (
-	"errors"
 	"fmt"
 	sysMath "math"
 )
@@ -66,13 +65,12 @@ func (v Vector3) IsZero() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Normalize returns a unit vector in the same direction. Returns `Vector3Zero`
-// if the magnitude is zero.
+// Normalize returns a unit vector in the same direction. Returns the zero
+// vector if the magnitude is zero.
 func (v Vector3) Normalize() Vector3 {
 
 	magnitude := sysMath.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z)
 
-	// The default case
 	if magnitude == 0 {
 		return Vector3Zero
 	}
@@ -281,6 +279,64 @@ func (v Vector3) LengthSq() float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Angle returns the angle in radians between this vector and the given vector.
+func (v Vector3) Angle(value Vector3) float64 {
+
+	a := v.Normalize()
+	b := value.Normalize()
+
+	cosine := a.Dot(b)
+
+	if cosine > 1 {
+		return 0
+	}
+	if cosine < -1 {
+		return sysMath.Pi
+	}
+
+	return sysMath.Acos(cosine)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ApplyQuaternion rotates the vector by the given quaternion.
+func (v Vector3) ApplyQuaternion(q Quaternion) Vector3 {
+
+	uvx := q.Y*v.Z - q.Z*v.Y
+	uvy := q.Z*v.X - q.X*v.Z
+	uvz := q.X*v.Y - q.Y*v.X
+
+	uuvx := q.Y*uvz - q.Z*uvy
+	uuvy := q.Z*uvx - q.X*uvz
+	uuvz := q.X*uvy - q.Y*uvx
+
+	w2 := q.W * 2
+
+	return Vector3{
+		v.X + uvx*w2 + uuvx*2,
+		v.Y + uvy*w2 + uuvy*2,
+		v.Z + uvz*w2 + uuvz*2,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToVector2 returns a Vector2 by dropping the Z component.
+func (v Vector3) ToVector2() Vector2 {
+
+	return Vector2{v.X, v.Y}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToVector4 returns a Vector4 with the given W component.
+func (v Vector3) ToVector4(w float64) Vector4 {
+
+	return Vector4{v.X, v.Y, v.Z, w}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // ToSlice32 returns the components as a float32 slice.
 func (v Vector3) ToSlice32() []float32 {
 
@@ -313,7 +369,7 @@ func (v Vector3) ToSlice64() []float64 {
 func Vector3FromSlice32(values []float32) (Vector3, error) {
 
 	if len(values) != 3 {
-		return Vector3Zero, errors.New("not enough values")
+		return Vector3Zero, ErrInvalidLength
 	}
 
 	v := Vector3{
@@ -331,7 +387,7 @@ func Vector3FromSlice32(values []float32) (Vector3, error) {
 func Vector3FromSlice64(values []float64) (Vector3, error) {
 
 	if len(values) != 3 {
-		return Vector3Zero, errors.New("not enough values")
+		return Vector3Zero, ErrInvalidLength
 	}
 
 	v := Vector3{
@@ -347,7 +403,7 @@ func Vector3FromSlice64(values []float64) (Vector3, error) {
 
 // Vector3TransformVector2 transforms a Vector2 by a matrix and returns the
 // resulting Vector3.
-func Vector3TransformVector2(matrix Matrix, value Vector2) Vector3 {
+func Vector3TransformVector2(matrix Matrix4, value Vector2) Vector3 {
 
 	return Vector3{
 		matrix.M11*value.X + matrix.M21*value.Y + matrix.M41,
@@ -360,7 +416,7 @@ func Vector3TransformVector2(matrix Matrix, value Vector2) Vector3 {
 
 // Vector3TransformVector3 transforms a Vector3 by a matrix and returns the
 // resulting Vector3.
-func Vector3TransformVector3(matrix Matrix, value Vector3) Vector3 {
+func Vector3TransformVector3(matrix Matrix4, value Vector3) Vector3 {
 
 	return Vector3{
 		matrix.M11*value.X + matrix.M21*value.Y + matrix.M31*value.Z + matrix.M41,
@@ -373,7 +429,7 @@ func Vector3TransformVector3(matrix Matrix, value Vector3) Vector3 {
 
 // Vector3TransformVector4 transforms a Vector4 by a matrix and returns the
 // resulting Vector3.
-func Vector3TransformVector4(matrix Matrix, value Vector4) Vector3 {
+func Vector3TransformVector4(matrix Matrix4, value Vector4) Vector3 {
 
 	return Vector3{
 		matrix.M11*value.X + matrix.M21*value.Y + matrix.M31*value.Z + matrix.M41*value.W,
