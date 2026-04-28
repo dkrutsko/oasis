@@ -12,8 +12,8 @@ type Key uint16
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
-	KeySpace     Key = 0x20 // VK_SPACE
-	KeyEscape    Key = 0x1B // VK_ESCAPE
+	KeySpace  Key = 0x20 // VK_SPACE
+	KeyEscape Key = 0x1B // VK_ESCAPE
 
 	KeyTab      Key = 0x09 // VK_TAB
 	KeyAlt      Key = 0x12 // VK_MENU
