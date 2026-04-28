@@ -359,6 +359,30 @@ func (v Vector3) ToSlice64() []float64 {
 	}
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes32 encodes the components as 12 bytes of little-endian float32 values.
+func (v Vector3) ToBytes32() []byte {
+
+	b := make([]byte, 12)
+	byteOrder.PutUint32(b[0:4], sysMath.Float32bits(float32(v.X)))
+	byteOrder.PutUint32(b[4:8], sysMath.Float32bits(float32(v.Y)))
+	byteOrder.PutUint32(b[8:12], sysMath.Float32bits(float32(v.Z)))
+	return b
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes64 encodes the components as 24 bytes of little-endian float64 values.
+func (v Vector3) ToBytes64() []byte {
+
+	b := make([]byte, 24)
+	byteOrder.PutUint64(b[0:8], sysMath.Float64bits(v.X))
+	byteOrder.PutUint64(b[8:16], sysMath.Float64bits(v.Y))
+	byteOrder.PutUint64(b[16:24], sysMath.Float64bits(v.Z))
+	return b
+}
+
 //----------------------------------------------------------------------------//
 // Static                                                                     //
 //----------------------------------------------------------------------------//
@@ -397,6 +421,40 @@ func Vector3FromSlice64(values []float64) (Vector3, error) {
 	}
 
 	return v, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Vector3FromBytes32 creates a Vector3 from a byte slice of at
+// least 12 bytes containing 3 little-endian float32 values.
+func Vector3FromBytes32(data []byte) (Vector3, error) {
+
+	if len(data) < 12 {
+		return Vector3Zero, ErrInvalidLength
+	}
+
+	return Vector3{
+		X: float64(sysMath.Float32frombits(byteOrder.Uint32(data[0:4]))),
+		Y: float64(sysMath.Float32frombits(byteOrder.Uint32(data[4:8]))),
+		Z: float64(sysMath.Float32frombits(byteOrder.Uint32(data[8:12]))),
+	}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Vector3FromBytes64 creates a Vector3 from a byte slice of at
+// least 24 bytes containing 3 little-endian float64 values.
+func Vector3FromBytes64(data []byte) (Vector3, error) {
+
+	if len(data) < 24 {
+		return Vector3Zero, ErrInvalidLength
+	}
+
+	return Vector3{
+		X: sysMath.Float64frombits(byteOrder.Uint64(data[0:8])),
+		Y: sysMath.Float64frombits(byteOrder.Uint64(data[8:16])),
+		Z: sysMath.Float64frombits(byteOrder.Uint64(data[16:24])),
+	}, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

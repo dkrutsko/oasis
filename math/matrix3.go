@@ -2,6 +2,7 @@ package math
 
 import (
 	"fmt"
+	sysMath "math"
 )
 
 //----------------------------------------------------------------------------//
@@ -183,6 +184,44 @@ func (m Matrix3) ToSlice64() []float64 {
 	}
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes32 encodes the elements as 36 bytes of little-endian
+// float32 values in row-major order.
+func (m Matrix3) ToBytes32() []byte {
+
+	b := make([]byte, 36)
+	byteOrder.PutUint32(b[0:4], sysMath.Float32bits(float32(m.M11)))
+	byteOrder.PutUint32(b[4:8], sysMath.Float32bits(float32(m.M12)))
+	byteOrder.PutUint32(b[8:12], sysMath.Float32bits(float32(m.M13)))
+	byteOrder.PutUint32(b[12:16], sysMath.Float32bits(float32(m.M21)))
+	byteOrder.PutUint32(b[16:20], sysMath.Float32bits(float32(m.M22)))
+	byteOrder.PutUint32(b[20:24], sysMath.Float32bits(float32(m.M23)))
+	byteOrder.PutUint32(b[24:28], sysMath.Float32bits(float32(m.M31)))
+	byteOrder.PutUint32(b[28:32], sysMath.Float32bits(float32(m.M32)))
+	byteOrder.PutUint32(b[32:36], sysMath.Float32bits(float32(m.M33)))
+	return b
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes64 encodes the elements as 72 bytes of little-endian
+// float64 values in row-major order.
+func (m Matrix3) ToBytes64() []byte {
+
+	b := make([]byte, 72)
+	byteOrder.PutUint64(b[0:8], sysMath.Float64bits(m.M11))
+	byteOrder.PutUint64(b[8:16], sysMath.Float64bits(m.M12))
+	byteOrder.PutUint64(b[16:24], sysMath.Float64bits(m.M13))
+	byteOrder.PutUint64(b[24:32], sysMath.Float64bits(m.M21))
+	byteOrder.PutUint64(b[32:40], sysMath.Float64bits(m.M22))
+	byteOrder.PutUint64(b[40:48], sysMath.Float64bits(m.M23))
+	byteOrder.PutUint64(b[48:56], sysMath.Float64bits(m.M31))
+	byteOrder.PutUint64(b[56:64], sysMath.Float64bits(m.M32))
+	byteOrder.PutUint64(b[64:72], sysMath.Float64bits(m.M33))
+	return b
+}
+
 //----------------------------------------------------------------------------//
 // Static                                                                     //
 //----------------------------------------------------------------------------//
@@ -221,6 +260,54 @@ func Matrix3FromSlice64(values []float64) (Matrix3, error) {
 	}
 
 	return m, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix3FromBytes32 creates a Matrix3 from a byte slice of at
+// least 36 bytes containing 9 little-endian float32 values in
+// row-major order.
+func Matrix3FromBytes32(data []byte) (Matrix3, error) {
+
+	if len(data) < 36 {
+		return Matrix3Zero, ErrInvalidLength
+	}
+
+	return Matrix3{
+		M11: float64(sysMath.Float32frombits(byteOrder.Uint32(data[0:4]))),
+		M12: float64(sysMath.Float32frombits(byteOrder.Uint32(data[4:8]))),
+		M13: float64(sysMath.Float32frombits(byteOrder.Uint32(data[8:12]))),
+		M21: float64(sysMath.Float32frombits(byteOrder.Uint32(data[12:16]))),
+		M22: float64(sysMath.Float32frombits(byteOrder.Uint32(data[16:20]))),
+		M23: float64(sysMath.Float32frombits(byteOrder.Uint32(data[20:24]))),
+		M31: float64(sysMath.Float32frombits(byteOrder.Uint32(data[24:28]))),
+		M32: float64(sysMath.Float32frombits(byteOrder.Uint32(data[28:32]))),
+		M33: float64(sysMath.Float32frombits(byteOrder.Uint32(data[32:36]))),
+	}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Matrix3FromBytes64 creates a Matrix3 from a byte slice of at
+// least 72 bytes containing 9 little-endian float64 values in
+// row-major order.
+func Matrix3FromBytes64(data []byte) (Matrix3, error) {
+
+	if len(data) < 72 {
+		return Matrix3Zero, ErrInvalidLength
+	}
+
+	return Matrix3{
+		M11: sysMath.Float64frombits(byteOrder.Uint64(data[0:8])),
+		M12: sysMath.Float64frombits(byteOrder.Uint64(data[8:16])),
+		M13: sysMath.Float64frombits(byteOrder.Uint64(data[16:24])),
+		M21: sysMath.Float64frombits(byteOrder.Uint64(data[24:32])),
+		M22: sysMath.Float64frombits(byteOrder.Uint64(data[32:40])),
+		M23: sysMath.Float64frombits(byteOrder.Uint64(data[40:48])),
+		M31: sysMath.Float64frombits(byteOrder.Uint64(data[48:56])),
+		M32: sysMath.Float64frombits(byteOrder.Uint64(data[56:64])),
+		M33: sysMath.Float64frombits(byteOrder.Uint64(data[64:72])),
+	}, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

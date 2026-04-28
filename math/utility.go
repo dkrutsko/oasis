@@ -1,9 +1,16 @@
 package math
 
 import (
+	"encoding/binary"
 	"errors"
 	sysMath "math"
 )
+
+////////////////////////////////////////////////////////////////////////////////
+
+// byteOrder is the byte order used for encoding and decoding
+// float32 values in the ToBytes and FromBytes functions.
+var byteOrder = binary.LittleEndian
 
 ////////////////////////////////////////////////////////////////////////////////
 

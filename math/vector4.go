@@ -335,6 +335,32 @@ func (v Vector4) ToSlice64() []float64 {
 	}
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes32 encodes the components as 16 bytes of little-endian float32 values.
+func (v Vector4) ToBytes32() []byte {
+
+	b := make([]byte, 16)
+	byteOrder.PutUint32(b[0:4], sysMath.Float32bits(float32(v.X)))
+	byteOrder.PutUint32(b[4:8], sysMath.Float32bits(float32(v.Y)))
+	byteOrder.PutUint32(b[8:12], sysMath.Float32bits(float32(v.Z)))
+	byteOrder.PutUint32(b[12:16], sysMath.Float32bits(float32(v.W)))
+	return b
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes64 encodes the components as 32 bytes of little-endian float64 values.
+func (v Vector4) ToBytes64() []byte {
+
+	b := make([]byte, 32)
+	byteOrder.PutUint64(b[0:8], sysMath.Float64bits(v.X))
+	byteOrder.PutUint64(b[8:16], sysMath.Float64bits(v.Y))
+	byteOrder.PutUint64(b[16:24], sysMath.Float64bits(v.Z))
+	byteOrder.PutUint64(b[24:32], sysMath.Float64bits(v.W))
+	return b
+}
+
 //----------------------------------------------------------------------------//
 // Static                                                                     //
 //----------------------------------------------------------------------------//
@@ -375,6 +401,42 @@ func Vector4FromSlice64(values []float64) (Vector4, error) {
 	}
 
 	return v, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Vector4FromBytes32 creates a Vector4 from a byte slice of at
+// least 16 bytes containing 4 little-endian float32 values.
+func Vector4FromBytes32(data []byte) (Vector4, error) {
+
+	if len(data) < 16 {
+		return Vector4Zero, ErrInvalidLength
+	}
+
+	return Vector4{
+		X: float64(sysMath.Float32frombits(byteOrder.Uint32(data[0:4]))),
+		Y: float64(sysMath.Float32frombits(byteOrder.Uint32(data[4:8]))),
+		Z: float64(sysMath.Float32frombits(byteOrder.Uint32(data[8:12]))),
+		W: float64(sysMath.Float32frombits(byteOrder.Uint32(data[12:16]))),
+	}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Vector4FromBytes64 creates a Vector4 from a byte slice of at
+// least 32 bytes containing 4 little-endian float64 values.
+func Vector4FromBytes64(data []byte) (Vector4, error) {
+
+	if len(data) < 32 {
+		return Vector4Zero, ErrInvalidLength
+	}
+
+	return Vector4{
+		X: sysMath.Float64frombits(byteOrder.Uint64(data[0:8])),
+		Y: sysMath.Float64frombits(byteOrder.Uint64(data[8:16])),
+		Z: sysMath.Float64frombits(byteOrder.Uint64(data[16:24])),
+		W: sysMath.Float64frombits(byteOrder.Uint64(data[24:32])),
+	}, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////

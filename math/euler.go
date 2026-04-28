@@ -196,9 +196,109 @@ func (e Euler) ToSlice64() []float64 {
 	return []float64{e.X, e.Y, e.Z}
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes32 encodes the angles as 12 bytes of little-endian
+// float32 values. The rotation order is not included.
+func (e Euler) ToBytes32() []byte {
+
+	b := make([]byte, 12)
+	byteOrder.PutUint32(b[0:4], sysMath.Float32bits(float32(e.X)))
+	byteOrder.PutUint32(b[4:8], sysMath.Float32bits(float32(e.Y)))
+	byteOrder.PutUint32(b[8:12], sysMath.Float32bits(float32(e.Z)))
+	return b
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes64 encodes the angles as 24 bytes of little-endian
+// float64 values. The rotation order is not included.
+func (e Euler) ToBytes64() []byte {
+
+	b := make([]byte, 24)
+	byteOrder.PutUint64(b[0:8], sysMath.Float64bits(e.X))
+	byteOrder.PutUint64(b[8:16], sysMath.Float64bits(e.Y))
+	byteOrder.PutUint64(b[16:24], sysMath.Float64bits(e.Z))
+	return b
+}
+
 //----------------------------------------------------------------------------//
 // Static                                                                     //
 //----------------------------------------------------------------------------//
+
+////////////////////////////////////////////////////////////////////////////////
+
+// EulerFromSlice32 creates an Euler from a float32 slice and
+// a rotation order. The slice must have exactly 3 elements.
+func EulerFromSlice32(values []float32, order RotationOrderType) (Euler, error) {
+
+	if len(values) != 3 {
+		return EulerZero, ErrInvalidLength
+	}
+
+	return Euler{
+		X:     float64(values[0]),
+		Y:     float64(values[1]),
+		Z:     float64(values[2]),
+		Order: order,
+	}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// EulerFromSlice64 creates an Euler from a float64 slice and
+// a rotation order. The slice must have exactly 3 elements.
+func EulerFromSlice64(values []float64, order RotationOrderType) (Euler, error) {
+
+	if len(values) != 3 {
+		return EulerZero, ErrInvalidLength
+	}
+
+	return Euler{
+		X:     values[0],
+		Y:     values[1],
+		Z:     values[2],
+		Order: order,
+	}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// EulerFromBytes32 creates an Euler from a byte slice of at
+// least 12 bytes containing 3 little-endian float32 values
+// and a rotation order.
+func EulerFromBytes32(data []byte, order RotationOrderType) (Euler, error) {
+
+	if len(data) < 12 {
+		return EulerZero, ErrInvalidLength
+	}
+
+	return Euler{
+		X:     float64(sysMath.Float32frombits(byteOrder.Uint32(data[0:4]))),
+		Y:     float64(sysMath.Float32frombits(byteOrder.Uint32(data[4:8]))),
+		Z:     float64(sysMath.Float32frombits(byteOrder.Uint32(data[8:12]))),
+		Order: order,
+	}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// EulerFromBytes64 creates an Euler from a byte slice of at
+// least 24 bytes containing 3 little-endian float64 values
+// and a rotation order.
+func EulerFromBytes64(data []byte, order RotationOrderType) (Euler, error) {
+
+	if len(data) < 24 {
+		return EulerZero, ErrInvalidLength
+	}
+
+	return Euler{
+		X:     sysMath.Float64frombits(byteOrder.Uint64(data[0:8])),
+		Y:     sysMath.Float64frombits(byteOrder.Uint64(data[8:16])),
+		Z:     sysMath.Float64frombits(byteOrder.Uint64(data[16:24])),
+		Order: order,
+	}, nil
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
