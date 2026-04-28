@@ -11,24 +11,24 @@ import (
 // engine bone array returned by CModelState and correspond to
 // the standard player model rig.
 const (
-	BoneHead          = 6
-	BoneNeck          = 5
-	BoneSpine3        = 4
-	BoneSpine2        = 3
-	BoneSpine1        = 2
-	BonePelvis        = 1
-	BoneLeftShoulder  = 13
-	BoneLeftElbow     = 14
+	BoneHead          = 7
+	BoneNeck          = 6
+	BoneSpine3        = 5
+	BoneSpine2        = 4
+	BoneSpine1        = 3
+	BonePelvis        = 2
+	BoneLeftShoulder  = 8
+	BoneLeftElbow     = 11
 	BoneLeftHand      = 15
-	BoneRightShoulder = 8
-	BoneRightElbow    = 9
-	BoneRightHand     = 10
-	BoneLeftHip       = 25
-	BoneLeftKnee      = 26
-	BoneLeftFoot      = 27
-	BoneRightHip      = 22
-	BoneRightKnee     = 23
-	BoneRightFoot     = 24
+	BoneRightShoulder = 13
+	BoneRightElbow    = 14
+	BoneRightHand     = 16
+	BoneLeftHip       = 17
+	BoneLeftKnee      = 18
+	BoneLeftFoot      = 19
+	BoneRightHip      = 20
+	BoneRightKnee     = 21
+	BoneRightFoot     = 22
 
 	// Total number of bones we read per entity. This is the
 	// highest index plus one so we can read a single contiguous

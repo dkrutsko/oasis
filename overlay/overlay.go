@@ -357,6 +357,7 @@ func (o *Overlay) renderSkeleton(
 	}
 
 	yawRad := entity.Angles.Y * sysMath.Pi / 180.0
+	pitchRad := entity.Angles.X * sysMath.Pi / 180.0
 	sin90 := sysMath.Sin(yawRad + sysMath.Pi/2)
 	cos90 := sysMath.Cos(yawRad + sysMath.Pi/2)
 
@@ -427,6 +428,27 @@ func (o *Overlay) renderSkeleton(
 	if shLVis && shRVis {
 		dc.DrawLine(pShL.X, pShL.Y, pShR.X, pShR.Y)
 		dc.Stroke()
+	}
+
+	// View direction line from head
+	if headVis {
+		dirX := sysMath.Cos(pitchRad) * sysMath.Cos(yawRad)
+		dirY := sysMath.Cos(pitchRad) * sysMath.Sin(yawRad)
+		dirZ := -sysMath.Sin(pitchRad)
+
+		lookPoint := math.Vector3{
+			X: headPos.X + dirX*10,
+			Y: headPos.Y + dirY*10,
+			Z: headPos.Z + dirZ*10,
+		}
+
+		pLook, lookVis := math.ProjectToScreenMvp(lookPoint, viewport, mvp)
+		if lookVis {
+			pLook.X += vpX
+			pLook.Y += vpY
+			dc.DrawLine(pHead.X, pHead.Y, pLook.X, pLook.Y)
+			dc.Stroke()
+		}
 	}
 
 	//----------------------------------------------------------------------------//
