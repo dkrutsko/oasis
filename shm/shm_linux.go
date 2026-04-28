@@ -1,4 +1,4 @@
-package shmem
+package shm
 
 import "golang.org/x/sys/unix"
 

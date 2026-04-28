@@ -8,7 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/dkrutsko/oasis/errors"
-	"github.com/dkrutsko/oasis/shmem"
+	"github.com/dkrutsko/oasis/shm"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -33,7 +33,7 @@ const (
 // used to pass RGBA pixel data between the overlay producer and a
 // consumer such as Moonlight or the debug viewer.
 type SharedMemory struct {
-	seg     *shmem.Segment
+	seg     *shm.Segment
 	width   int
 	height  int
 	bufSize int
@@ -49,9 +49,9 @@ func ShmOpen(readOnly bool) (*SharedMemory, error) {
 
 	//----------------------------------------------------------------------------//
 
-	seg := shmem.New(&shmem.Options{
+	seg := shm.New(&shm.Options{
 		Name:      shmName,
-		Technique: shmem.TechniqueSharedMemory,
+		Technique: shm.TechniqueSharedMemory,
 	})
 
 	err := seg.Open(readOnly)

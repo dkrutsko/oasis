@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package shmem
+package shm
 
 import (
 	"os"

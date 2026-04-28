@@ -1,9 +1,9 @@
-// Package shmem provides cross-platform shared memory between
+// Package shm provides cross-platform shared memory between
 // processes. It supports POSIX shared memory on unix, pagefile-
 // backed file mappings on Windows, and file-backed memory mapping
 // on all platforms. The backing store is selected via the
 // Technique field in Options.
-package shmem
+package shm
 
 import (
 	"os"
