@@ -75,6 +75,16 @@ func (g *Game) GetCameraState() *CameraState {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadCamera performs a synchronous DMA read of the view matrix
+// and returns a fresh camera state. Use this when minimal latency
+// between the camera read and its use is important (e.g. right
+// before rendering).
+func (g *Game) ReadCamera() *CameraState {
+	return g.updateCamera(g.scanner)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (g *Game) Create() error {
 
 	//----------------------------------------------------------------------------//
@@ -183,7 +193,12 @@ func (g *Game) Create() error {
 			// Calculate remaining time for frame
 			rem := (time.Second / 120) - elapsed
 			if rem > 0 {
-				time.Sleep(rem)
+				select {
+				case <-g.options.Gctx.Done():
+					logger.Dbg("stopping action updater")
+					return nil
+				case <-time.After(rem):
+				}
 			}
 		}
 	})
@@ -209,7 +224,6 @@ func (g *Game) Create() error {
 			// Set state if update was successful
 			if next.Result == CameraResultSuccess {
 				g.camera = next
-				//fmt.Println(g.camera.View.String()) // TODO: REMOVE THIS LINE
 			}
 
 			// Calculate time for update
@@ -218,7 +232,12 @@ func (g *Game) Create() error {
 			// Calculate remaining time for frame
 			rem := (time.Second / 120) - elapsed
 			if rem > 0 {
-				time.Sleep(rem)
+				select {
+				case <-g.options.Gctx.Done():
+					logger.Dbg("stopping camera updater")
+					return nil
+				case <-time.After(rem):
+				}
 			}
 		}
 	})

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -178,15 +179,7 @@ func main() {
 	//----------------------------------------------------------------------------//
 
 	// Start the overlay renderer
-	o, err := overlay.NewOverlay(g)
-	if err != nil {
-		logger.Err(
-			"failed to create overlay",
-			logger.Error("error", err),
-		)
-		os.Exit(int(exitCodeCreateOverlay))
-	}
-
+	o := overlay.NewOverlay(g)
 	defer o.Close()
 	o.Start(group, gctx)
 
@@ -247,6 +240,13 @@ func setupSignals() (context.Context, context.CancelFunc) {
 		<-quit // Graceful shutdown on first request
 		logger.Info("attempting a graceful shutdown")
 		cancel()
+
+		// Force exit if goroutines don't stop within 5 seconds
+		go func() {
+			time.Sleep(5 * time.Second)
+			logger.Warn("graceful shutdown timed out")
+			os.Exit(int(exitCodeForceExit))
+		}()
 
 		<-quit // Termination on subsequent requests
 		logger.Warn("forceful termination requested")
