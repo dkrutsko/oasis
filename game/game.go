@@ -30,6 +30,7 @@ type Game struct {
 	scanner      *ScannerState
 	memory       *leech.Memory
 	cameraMemory *leech.Memory
+	scatter      *leech.Scatter
 	action       *ActionState
 	camera       *CameraState
 
@@ -142,6 +143,15 @@ func (g *Game) Create() error {
 					// Separate uncached memory for camera reads
 					g.cameraMemory = next.Process.GetMemory()
 
+					// Create scatter handle for batched entity reads
+					scatter, sErr := next.Process.GetScatter(leech.ScatterFlagDefault)
+					if sErr != nil {
+						logger.Warn("failed to create scatter handle",
+							logger.Error("error", sErr),
+						)
+					}
+					g.scatter = scatter
+
 					logger.Info(
 						"attached",
 						logger.Uint32("pid", next.Process.GetPid()),
@@ -159,6 +169,11 @@ func (g *Game) Create() error {
 						g.memory = nil
 					}
 					g.cameraMemory = nil
+
+					if g.scatter != nil {
+						g.scatter.Close()
+						g.scatter = nil
+					}
 
 					logger.Info("detached")
 				}
@@ -264,6 +279,11 @@ func (g *Game) Create() error {
 						16384, 4096, 5242880, 1048576, 10485760,
 					)
 					g.memory = mem
+
+					scatter, sErr := s.Process.GetScatter(leech.ScatterFlagDefault)
+					if sErr == nil {
+						g.scatter = scatter
+					}
 				}
 			}
 

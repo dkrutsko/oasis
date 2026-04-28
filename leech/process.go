@@ -370,6 +370,57 @@ func (p *Process) GetMemory() *Memory {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetScatter returns a new Scatter instance for batched
+// read and write access to the virtual address space of
+// this process. The `flags` parameter sets the VMMDLL flags
+// applied to all operations on the handle. Call `Close`
+// when the handle is no longer needed.
+func (p *Process) GetScatter(flags uint32) (*Scatter, error) {
+
+	//----------------------------------------------------------------------------//
+
+	p.leech.lock.RLock()
+	defer p.leech.lock.RUnlock()
+
+	if p.leech.handle == 0 || p.pid == 0 {
+		return nil, errors.New("process is not valid")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	handle, err := vmmCall(
+		vmmDll.scatterInitialize,
+		p.leech.handle,
+		uintptr(p.pid),
+		uintptr(flags),
+	)
+	if err != nil {
+		return nil, errors.New(
+			"failed to initialize scatter handle",
+			errors.Uint32("pid", p.pid),
+			errors.Error("error", err),
+		)
+	}
+	if handle == 0 {
+		return nil, errors.New(
+			"failed to initialize scatter handle",
+			errors.Uint32("pid", p.pid),
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	return &Scatter{
+		leech:  p.leech,
+		proc:   p,
+		handle: handle,
+	}, nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // Eq returns true if both processes have the same PID.
 func (p *Process) Eq(value *Process) bool {
 	return p.pid == value.pid

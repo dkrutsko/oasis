@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dkrutsko/oasis/leech"
 	"github.com/dkrutsko/oasis/math"
 )
 
@@ -208,6 +209,243 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		result.Result = ActionResultNoEntList
 		return result
 	}
+
+	//----------------------------------------------------------------------------//
+
+	// Use scatter for batched entity reads when available.
+	// This reduces ~30-40 individual DMA round-trips to ~5
+	// batched executions.
+	scatter := g.scatter
+	pid := scanner.Process.GetPid()
+
+	if scatter == nil {
+		return g.updateActionSequential(
+			result, memory, localPawnAddr, entListBase, listEntry,
+			offPawnHandle, offHealth, offTeamNum, offOrigin, offEyeAngles,
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Pass 1: Read all 64 controller pointers
+	for e := 0; e < 64; e++ {
+		scatter.Prepare(listEntry+uintptr(e+1)*0x70, 8)
+	}
+
+	if err := scatter.ExecuteRead(); err != nil {
+		result.Result = ActionResultReadFail
+		return result
+	}
+
+	var controllers [64]uintptr
+	for e := 0; e < 64; e++ {
+		controllers[e], _ = scatter.ReadPtr(listEntry + uintptr(e+1)*0x70)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Pass 2: Read pawn handles from valid controllers
+	scatter.Clear(pid, leech.ScatterFlagDefault)
+
+	for e := 0; e < 64; e++ {
+		if controllers[e] != 0 {
+			scatter.Prepare(controllers[e]+offPawnHandle, 4)
+		}
+	}
+
+	if err := scatter.ExecuteRead(); err != nil {
+		result.Result = ActionResultReadFail
+		return result
+	}
+
+	var pawnHandles [64]int32
+	var chunkIdxs [64]uintptr
+	var entryIdxs [64]uintptr
+
+	for e := 0; e < 64; e++ {
+		if controllers[e] == 0 {
+			continue
+		}
+
+		h, _ := scatter.ReadInt32(controllers[e] + offPawnHandle)
+		if h == 0 || h == -1 {
+			continue
+		}
+
+		pawnHandles[e] = h
+		entityIndex := uintptr(h) & 0x7FFF
+		chunkIdxs[e] = entityIndex >> 9
+		entryIdxs[e] = entityIndex & 0x1FF
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Pass 3: Read pawn chunk pointers
+	scatter.Clear(pid, leech.ScatterFlagDefault)
+
+	for e := 0; e < 64; e++ {
+		if pawnHandles[e] == 0 {
+			continue
+		}
+		scatter.Prepare(entListBase+0x10+8*chunkIdxs[e], 8)
+	}
+
+	if err := scatter.ExecuteRead(); err != nil {
+		result.Result = ActionResultReadFail
+		return result
+	}
+
+	var pawnChunks [64]uintptr
+	for e := 0; e < 64; e++ {
+		if pawnHandles[e] == 0 {
+			continue
+		}
+		pawnChunks[e], _ = scatter.ReadPtr(entListBase + 0x10 + 8*chunkIdxs[e])
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Pass 4: Read pawn pointers from chunks
+	scatter.Clear(pid, leech.ScatterFlagDefault)
+
+	for e := 0; e < 64; e++ {
+		if pawnChunks[e] == 0 {
+			continue
+		}
+		scatter.Prepare(pawnChunks[e]+0x70*entryIdxs[e], 8)
+	}
+
+	if err := scatter.ExecuteRead(); err != nil {
+		result.Result = ActionResultReadFail
+		return result
+	}
+
+	var pawns [64]uintptr
+	for e := 0; e < 64; e++ {
+		if pawnChunks[e] == 0 {
+			continue
+		}
+		pawns[e], _ = scatter.ReadPtr(pawnChunks[e] + 0x70*entryIdxs[e])
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Pass 5: Read entity data for all valid pawns
+	scatter.Clear(pid, leech.ScatterFlagDefault)
+
+	for e := 0; e < 64; e++ {
+		if pawns[e] == 0 {
+			continue
+		}
+		scatter.Prepare(pawns[e]+offHealth, 4)
+		scatter.Prepare(pawns[e]+offTeamNum, 4)
+		scatter.Prepare(pawns[e]+offOrigin, 12)
+		scatter.Prepare(pawns[e]+offEyeAngles, 8)
+	}
+
+	if err := scatter.ExecuteRead(); err != nil {
+		result.Result = ActionResultReadFail
+		return result
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Decode results and build entity list
+	entities := make([]ActionEntity, 0, 64)
+	playerIdx := -1
+
+	for e := 0; e < 64; e++ {
+		if pawns[e] == 0 {
+			continue
+		}
+
+		health, _ := scatter.ReadInt32(pawns[e] + offHealth)
+		if health <= 0 {
+			continue
+		}
+
+		team, _ := scatter.ReadInt32(pawns[e] + offTeamNum)
+
+		originData, err := scatter.Read(pawns[e]+offOrigin, 12)
+		if err != nil {
+			continue
+		}
+		origin, _ := math.Vector3FromBytes32(originData)
+
+		if origin.X == 0 && origin.Y == 0 && origin.Z == 0 {
+			continue
+		}
+
+		anglesData, _ := scatter.Read(pawns[e]+offEyeAngles, 8)
+		angles, _ := math.Vector2FromBytes32(anglesData)
+
+		entity := ActionEntity{
+			Valid:  true,
+			Index:  e,
+			Origin: origin,
+			Angles: angles,
+			Health: health,
+			Team:   team,
+			Head:   math.Vector3{X: origin.X, Y: origin.Y, Z: origin.Z + 72},
+		}
+
+		entities = append(entities, entity)
+
+		if pawns[e] == localPawnAddr {
+			playerIdx = len(entities) - 1
+		}
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Reset scatter for next frame
+	scatter.Clear(pid, leech.ScatterFlagDefault)
+
+	//----------------------------------------------------------------------------//
+
+	result.Entities = entities
+
+	if playerIdx >= 0 {
+		result.Player = &result.Entities[playerIdx]
+	}
+
+	// Calculate distances from local player
+	if result.Player != nil {
+		for i := range result.Entities {
+			if &result.Entities[i] == result.Player {
+				continue
+			}
+
+			dx := result.Entities[i].Origin.X - result.Player.Origin.X
+			dy := result.Entities[i].Origin.Y - result.Player.Origin.Y
+			dz := result.Entities[i].Origin.Z - result.Player.Origin.Z
+			result.Entities[i].Distance = sysMath.Sqrt(dx*dx + dy*dy + dz*dz)
+		}
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Specify that scan was successful
+	result.Result = ActionResultSuccess
+	return result
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (g *Game) updateActionSequential(
+	result *ActionState,
+	memory *leech.Memory,
+	localPawnAddr uintptr,
+	entListBase uintptr,
+	listEntry uintptr,
+	offPawnHandle uintptr,
+	offHealth uintptr,
+	offTeamNum uintptr,
+	offOrigin uintptr,
+	offEyeAngles uintptr,
+) *ActionState {
 
 	//----------------------------------------------------------------------------//
 

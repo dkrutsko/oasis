@@ -35,6 +35,16 @@ type vmmLib struct {
 	memReadEx    vmmProc
 	memWrite     vmmProc
 
+	scatterInitialize   vmmProc
+	scatterPrepare      vmmProc
+	scatterPrepareEx    vmmProc
+	scatterPrepareWrite vmmProc
+	scatterExecute      vmmProc
+	scatterExecuteRead  vmmProc
+	scatterRead         vmmProc
+	scatterClear        vmmProc
+	scatterCloseHandle  vmmProc
+
 	configGet vmmProc
 	configSet vmmProc
 }
@@ -159,6 +169,53 @@ func loadVmmDll() error {
 	}
 
 	result.memWrite, err = find("VMMDLL_MemWrite")
+	if err != nil {
+		return err
+	}
+
+	//----------------------------------------------------------------------------//
+
+	result.scatterInitialize, err = find("VMMDLL_Scatter_Initialize")
+	if err != nil {
+		return err
+	}
+
+	result.scatterPrepare, err = find("VMMDLL_Scatter_Prepare")
+	if err != nil {
+		return err
+	}
+
+	result.scatterPrepareEx, err = find("VMMDLL_Scatter_PrepareEx")
+	if err != nil {
+		return err
+	}
+
+	result.scatterPrepareWrite, err = find("VMMDLL_Scatter_PrepareWrite")
+	if err != nil {
+		return err
+	}
+
+	result.scatterExecute, err = find("VMMDLL_Scatter_Execute")
+	if err != nil {
+		return err
+	}
+
+	result.scatterExecuteRead, err = find("VMMDLL_Scatter_ExecuteRead")
+	if err != nil {
+		return err
+	}
+
+	result.scatterRead, err = find("VMMDLL_Scatter_Read")
+	if err != nil {
+		return err
+	}
+
+	result.scatterClear, err = find("VMMDLL_Scatter_Clear")
+	if err != nil {
+		return err
+	}
+
+	result.scatterCloseHandle, err = find("VMMDLL_Scatter_CloseHandle")
 	if err != nil {
 		return err
 	}
