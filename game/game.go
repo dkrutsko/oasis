@@ -75,16 +75,6 @@ func (g *Game) GetCameraState() *CameraState {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// ReadCamera performs a synchronous DMA read of the view matrix
-// and returns a fresh camera state. Use this when minimal latency
-// between the camera read and its use is important (e.g. right
-// before rendering).
-func (g *Game) ReadCamera() *CameraState {
-	return g.updateCamera(g.scanner)
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
 func (g *Game) Create() error {
 
 	//----------------------------------------------------------------------------//

@@ -196,7 +196,45 @@ func (o *Overlay) renderEntities(
 	// to align the two.
 	mvp := camera.View.Transpose()
 	localTeam := action.Player.Team
-	viewport := math.Size{W: width, H: height}
+
+	// Extract the game's viewport aspect ratio from the view
+	// matrix. For a combined view-projection matrix, the 3D
+	// length of row 0 gives |P[0][0]| (horizontal projection
+	// scale) and row 1 gives |P[1][1]| (vertical). Their
+	// ratio is the viewport width/height aspect ratio. This
+	// lets us detect black bars when the game runs at a
+	// different aspect ratio than the stream.
+	view := camera.View
+	xScale := sysMath.Sqrt(view.M11*view.M11 + view.M12*view.M12 + view.M13*view.M13)
+	yScale := sysMath.Sqrt(view.M21*view.M21 + view.M22*view.M22 + view.M23*view.M23)
+
+	streamW := float64(width)
+	streamH := float64(height)
+
+	var vpX, vpY float64
+	var vpW, vpH float64
+
+	if xScale > 0 && yScale > 0 {
+		gameAspect := yScale / xScale
+		streamAspect := streamW / streamH
+
+		if gameAspect < streamAspect {
+			// Pillarboxing (black bars on sides)
+			vpH = streamH
+			vpW = vpH * gameAspect
+			vpX = (streamW - vpW) / 2
+		} else {
+			// Letterboxing (black bars top/bottom) or matching
+			vpW = streamW
+			vpH = streamW / gameAspect
+			vpY = (streamH - vpH) / 2
+		}
+	} else {
+		vpW = streamW
+		vpH = streamH
+	}
+
+	viewport := math.Size{W: int(vpW), H: int(vpH)}
 
 	for i := range action.Entities {
 		entity := &action.Entities[i]
@@ -222,6 +260,12 @@ func (o *Overlay) renderEntities(
 		if !headVisible {
 			continue
 		}
+
+		// Offset from game viewport to overlay canvas
+		headScreen.X += vpX
+		headScreen.Y += vpY
+		feetScreen.X += vpX
+		feetScreen.Y += vpY
 
 		sx := headScreen.X
 		sy := headScreen.Y
@@ -275,7 +319,7 @@ func (o *Overlay) renderEntities(
 			}
 
 			// View direction indicator
-			o.renderViewDir(dc, entity, sx, sy, mvp, viewport)
+			o.renderViewDir(dc, entity, sx, sy, mvp, viewport, vpX, vpY)
 
 		} else {
 			// Teammate indicator
@@ -294,6 +338,7 @@ func (o *Overlay) renderViewDir(
 	sx, sy float64,
 	mvp math.Matrix4,
 	viewport math.Size,
+	vpX, vpY float64,
 ) {
 
 	// Convert eye angles to a forward direction vector
@@ -318,6 +363,10 @@ func (o *Overlay) renderViewDir(
 	if !lookVisible {
 		return
 	}
+
+	// Offset from game viewport to overlay canvas
+	lookScreen.X += vpX
+	lookScreen.Y += vpY
 
 	dc.SetColor(color.NRGBA{255, 100, 100, 140})
 	dc.SetLineWidth(1.0)
