@@ -1,28 +1,90 @@
 package leech
 
 import (
+	"context"
 	"encoding/binary"
 	"math"
+	"strconv"
+	"strings"
 	"sync"
 	"unsafe"
-
-	"golang.org/x/sys/windows"
 
 	"github.com/dkrutsko/oasis/errors"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 
-type Memory struct {
-	leech *Leech
-	proc  *Process
+// Stats tracks memory operation counters for a Memory
+// instance. Useful for measuring and optimizing the
+// performance of a particular code path. All counters are
+// cumulative since the last call to `ResetStats`.
+type Stats struct {
 
-	cache map[uintptr][]byte
-	lock  sync.Mutex
+	// SystemReads is the number of page reads sent to VMMDLL.
+	SystemReads uint32
+
+	// CachedReads is the number of reads served from the local
+	// cache.
+	CachedReads uint32
+
+	// SystemWrites is the number of writes sent to VMMDLL.
+	SystemWrites uint32
+
+	// ReadErrors is the number of failed read operations.
+	ReadErrors uint32
+
+	// WriteErrors is the number of failed write operations.
+	WriteErrors uint32
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Memory provides typed read and write access to the virtual
+// address space of a process via DMA. Use `CreateCache` to
+// enable block-aligned caching for improved read performance.
+// Use `ClearCache` to invalidate stale data when fresh reads
+// are needed. To create a Memory instance, use
+// `Process.GetMemory`. Memory is safe for concurrent use.
+type Memory struct {
+	leech *Leech
+	proc  *Process
+
+	cache      []byte
+	cachePages map[uintptr]uintptr
+	cacheNext  uintptr
+
+	blockLength uintptr
+	blockBuffer uintptr
+	cacheSize   uintptr
+	enlargeSize uintptr
+	maximumSize uintptr
+
+	lock  sync.Mutex
+	stats Stats
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// MemType identifies a primitive data type for use with
+// ReadTypes.
+type MemType int
+
+const (
+	MemTypeBuffer  MemType = 0x0 // Raw byte buffer
+	MemTypeInt8    MemType = 0x1 // Signed 8-bit integer
+	MemTypeInt16   MemType = 0x2 // Signed 16-bit integer
+	MemTypeInt32   MemType = 0x3 // Signed 32-bit integer
+	MemTypeInt64   MemType = 0x4 // Signed 64-bit integer
+	MemTypeFloat32 MemType = 0x5 // 32-bit IEEE float
+	MemTypeFloat64 MemType = 0x6 // 64-bit IEEE float
+	MemTypeBool    MemType = 0x7 // Boolean (1 byte)
+	MemTypeString  MemType = 0x8 // Null-terminated C string
+)
+
+////////////////////////////////////////////////////////////////////////////////
+
+// IsValid returns true if the underlying process is still
+// valid on the target system.
 func (m *Memory) IsValid() bool {
 
 	// If process is valid
@@ -31,13 +93,74 @@ func (m *Memory) IsValid() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetProcess returns the process this Memory is attached to.
 func (m *Memory) GetProcess() *Process {
 	return m.proc
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
+// GetStats returns a snapshot of the current operation
+// counters. Useful for measuring and optimizing the
+// performance of a particular code path.
+func (m *Memory) GetStats() Stats {
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	return m.stats
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ResetStats zeroes all operation counters.
+func (m *Memory) ResetStats() {
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.stats = Stats{}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetRegion returns the memory region containing the given
+// address. Returns (nil, nil) if the address is unmapped.
+func (m *Memory) GetRegion(ctx context.Context, address uintptr) (*Region, error) {
+
+	//----------------------------------------------------------------------------//
+
+	// Get regions covering a single page at the address
+	regions, err := m.GetRegions(ctx, address, address+1)
+	if err != nil {
+		return nil, err
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Find the region that contains the address
+	for _, region := range regions {
+		if region.Contains(address) {
+			return region, nil
+		}
+	}
+
+	return nil, nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetRegions returns all memory regions within the address
+// range [start, stop). User-space regions are retrieved from
+// VADs and kernel-space regions (above `GetMaxUserAddress`)
+// from PTEs. Gaps between mapped regions are filled with
+// invalid placeholder regions. Both `start` and `stop` are
+// aligned to page boundaries. The resulting list is sorted
+// from start to stop and includes both bound and unbound
+// regions. Returns an empty list if the range is empty.
+func (m *Memory) GetRegions(ctx context.Context, start uintptr, stop uintptr) ([]*Region, error) {
 
 	//----------------------------------------------------------------------------//
 
@@ -55,13 +178,8 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 	//----------------------------------------------------------------------------//
 
 	// Ensure start is in range
-	if start < m.GetMinAddress() {
-		start = m.GetMinAddress()
-	}
-
-	// Ensure stop is in range
-	if stop > m.GetMaxAddress() {
-		stop = m.GetMaxAddress()
+	if start < m.GetMinUserAddress() {
+		start = m.GetMinUserAddress()
 	}
 
 	oldStop := stop
@@ -81,13 +199,14 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 
 	var mapVadPtr uintptr
 	// Attempt to retrieve the VAD information
-	success, _, err := vmmDll.mapGetVadW.Call(
+	success, err := vmmCall(
+		vmmDll.mapGetVad,
 		m.leech.handle,
 		uintptr(m.proc.pid),
 		0,
 		uintptr(unsafe.Pointer(&mapVadPtr)),
 	)
-	if err.(windows.Errno) != 0 {
+	if err != nil {
 		return nil, errors.New(
 			"failed to get vad info",
 			errors.Uint32("pid", m.proc.pid),
@@ -103,7 +222,7 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 
 	defer func() {
 		// Attempt to free the allocated memory
-		_, _, _ = vmmDll.memFree.Call(mapVadPtr)
+		_, _ = vmmCall(vmmDll.memFree, mapVadPtr)
 	}()
 
 	//----------------------------------------------------------------------------//
@@ -125,6 +244,10 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 		addr := start
 		// Iterate through number of returned VADs
 		for i := uint32(0); i < vadMap.count; i++ {
+
+			if ctx.Err() != nil {
+				return result, ctx.Err()
+			}
 
 			// Convert the current pointer to VAD structure
 			vadPtr := unsafe.Pointer(base + uintptr(i)*size)
@@ -160,23 +283,21 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 			flags0 := vad.flags0.Decode()
 			flags1 := vad.flags1.Decode()
 
-			// In Windows, it's possible to allocate virtual memory that is not
-			// initially backed by physical pages — for example, memory that is
-			// only committed or paged in upon first access.
+			// In Windows, it's possible to allocate virtual memory that is
+			// not initially backed by physical pages - for example, memory
+			// that is only committed or paged in upon first access.
 			//
-			// The presence of physical backing can be determined using
-			// `MiGetWorkingSetInfoList`, which inspects PFNs (Page Frame Numbers)
-			// associated with each virtual page.
+			// Physical residency can be determined by walking the PFN
+			// (Page Frame Number) database via DMA, but we use the VAD
+			// committed flag as a practical approximation instead.
 			//
-			// Some applications use this type of lazy allocation intentionally
-			// to detect memory scanners or debuggers, altering behavior if the
-			// memory is accessed prematurely.
+			// Some applications use lazy allocation intentionally to
+			// detect memory scanners or debuggers, altering behavior
+			// if the memory is accessed prematurely.
 			//
-			// Since `VMMDLL_MemRead` does *not* fault in or back uncommitted memory
-			// upon access, the `bound` flag is still valid for most scanning use cases.
-			//
-			// If more accurate tracking of physical residency is required,
-			// a future implementation could read the PFNs and validate them manually.
+			// Since `VMMDLL_MemRead` does not fault in uncommitted memory
+			// upon access, the `bound` flag is still valid for most
+			// scanning use cases.
 			//
 			// Demo: https://gist.github.com/dkrutsko/d6118638b0ef711b30bfcfe5b083d067
 			bound := flags1.isCommitted
@@ -189,13 +310,13 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 				Stop:  vadStop,
 				Size:  vadStop - vadStart,
 
-				Readable:   (flags0.protection & ACCESS_PAGE_R) != 0,
-				Writable:   (flags0.protection & ACCESS_PAGE_W) != 0,
-				Executable: (flags0.protection & ACCESS_PAGE_X) != 0,
+				Readable:   (flags0.protection & AccessPageR) != 0,
+				Writable:   (flags0.protection & AccessPageW) != 0,
+				Executable: (flags0.protection & AccessPageX) != 0,
 				Access:     flags0.protection,
 
 				Private: flags0.isPrivateMemory,
-				Guarded: (flags0.protection & PAGE_GUARD) != 0,
+				Guarded: (flags0.protection & PageGuard) != 0,
 			}
 
 			// Add current region to result
@@ -203,13 +324,20 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 			addr = vadStop
 		}
 
-		// Fill final gap
-		if addr < stop {
+		// Fill final gap up to the user/kernel boundary.
+		// Anything past `GetMaxUserAddress` is handled
+		// by the PTE section below.
+		vadStop := stop
+		if vadStop > m.GetMaxUserAddress() {
+			vadStop = m.GetMaxUserAddress()
+		}
+
+		if addr < vadStop {
 
 			region := &Region{
 				Start: addr,
-				Stop:  stop,
-				Size:  stop - addr,
+				Stop:  vadStop,
+				Size:  vadStop - addr,
 			}
 
 			// Add invalid region to result
@@ -219,21 +347,24 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 
 	//----------------------------------------------------------------------------//
 
-	/*
-		// Anything past `GetMaxAddress` cannot be retrieved using VADs. Those regions
-		// belong to kernel space, and thus must be retrieved using PTEs. Below is some
-		// code which retrieves PTEs but does nothing with them. Complete this section
-		// if support for kernel region mapping is required.
+	// Anything past `GetMaxUserAddress` cannot be retrieved using
+	// VADs. Those regions belong to kernel space, and thus must be
+	// retrieved using PTEs. Each PTE entry represents a contiguous
+	// run of pages with the same flags, so they map directly to
+	// regions.
+
+	if stop > m.GetMaxUserAddress() {
 
 		var mapPtePtr uintptr
 		// Attempt to retrieve the PTE information
-		success, _, err = vmmDll.mapGetPteW.Call(
+		success, err = vmmCall(
+			vmmDll.mapGetPte,
 			m.leech.handle,
 			uintptr(m.proc.pid),
 			0,
 			uintptr(unsafe.Pointer(&mapPtePtr)),
 		)
-		if err.(windows.Errno) != 0 {
+		if err != nil {
 			return nil, errors.New(
 				"failed to get pte info",
 				errors.Uint32("pid", m.proc.pid),
@@ -249,7 +380,7 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 
 		defer func() {
 			// Attempt to free the allocated memory
-			_, _, _ = vmmDll.memFree.Call(mapPtePtr)
+			_, _ = vmmCall(vmmDll.memFree, mapPtePtr)
 		}()
 
 		//----------------------------------------------------------------------------//
@@ -267,18 +398,59 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 
 			base := uintptr(unsafe.Pointer(&pteMap.ptes))
 			size := unsafe.Sizeof(vmmMapPteEntry{})
+			pageSize := m.GetPageSize()
 
 			// Iterate through number of returned PTEs
 			for i := uint32(0); i < pteMap.count; i++ {
+
+				if ctx.Err() != nil {
+					return result, ctx.Err()
+				}
 
 				// Convert the current pointer to PTE structure
 				ptePtr := unsafe.Pointer(base + uintptr(i)*size)
 				pte := (*vmmMapPteEntry)(ptePtr)
 
-				// NYI:
+				pteStart := uintptr(pte.base)
+				pteStop := pteStart + uintptr(pte.pageCount)*pageSize
+
+				// Only include PTEs in the kernel region
+				if pteStart < m.GetMaxUserAddress() {
+					continue
+				}
+
+				// Skip PTEs outside the requested range
+				if pteStop <= start {
+					continue
+				}
+
+				if pteStart >= stop {
+					break
+				}
+
+				// Decode PTE page flags. PTEs present in the map
+				// are always readable. Writable and executable are
+				// derived from the hardware page flags.
+				flags := pte.pageFlags.Decode()
+
+				region := &Region{
+					Valid: true,
+					Bound: true,
+
+					Start: pteStart,
+					Stop:  pteStop,
+					Size:  pteStop - pteStart,
+
+					Readable:   true,
+					Writable:   flags.isWritable,
+					Executable: !flags.isNoExecute,
+				}
+
+				// Add current region to result
+				result = append(result, region)
 			}
 		}
-	*/
+	}
 
 	//----------------------------------------------------------------------------//
 
@@ -289,17 +461,321 @@ func (m *Memory) GetRegions(start uintptr, stop uintptr) ([]*Region, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func parsePattern(pattern string) ([]byte, []bool, error) {
+
+	// Split pattern into hex tokens
+	tokens := strings.Fields(pattern)
+	if len(tokens) == 0 {
+		return nil, nil, errors.New("pattern is empty")
+	}
+
+	bytes := make([]byte, len(tokens))
+	mask := make([]bool, len(tokens))
+
+	for i, token := range tokens {
+
+		// Check for wildcard token
+		if token == "?" || token == "??" {
+			mask[i] = true
+			continue
+		}
+
+		// Parse hex byte value
+		val, err := strconv.ParseUint(token, 16, 8)
+		if err != nil {
+			return nil, nil, errors.New(
+				"invalid pattern token",
+				errors.String("token", token),
+			)
+		}
+
+		bytes[i] = byte(val)
+	}
+
+	return bytes, mask, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Find searches for a byte pattern within the address range
+// [start, stop) and returns the addresses of all matches.
+// The pattern is a space-separated string of two-digit hex
+// bytes where "?" or "??" denotes a wildcard that matches
+// any byte. For example: "48 8B 45 ? 48 89 C7". Searching
+// is performed region by region, reading in 4 MB chunks.
+// Only valid, bound, and readable regions are scanned.
+// Reads bypass the cache to avoid memory pressure during
+// large scans. If `limit` is greater than zero, the search
+// stops after that many matches. Returns an empty list if
+// the pattern is invalid or no matches are found.
+func (m *Memory) Find(
+	ctx context.Context,
+	pattern string,
+	start, stop uintptr,
+	limit int,
+) ([]uintptr, error) {
+
+	//----------------------------------------------------------------------------//
+
+	// Parse the pattern into bytes and wildcard mask
+	patBytes, patMask, err := parsePattern(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	patLen := uintptr(len(patBytes))
+
+	//----------------------------------------------------------------------------//
+
+	// Retrieve all regions in the requested range
+	regions, err := m.GetRegions(ctx, start, stop)
+	if err != nil {
+		return nil, err
+	}
+
+	//----------------------------------------------------------------------------//
+
+	var results []uintptr
+	chunkSize := uintptr(4 * 1024 * 1024) // 4 MB
+	overlap := patLen - 1
+
+	// Iterate through each scannable region
+	for _, region := range regions {
+
+		// Skip regions that cannot be scanned
+		if !region.Valid || !region.Bound || !region.Readable {
+			continue
+		}
+
+		regionStart := region.Start
+		regionStop := region.Stop
+
+		// Clamp to requested range
+		if regionStart < start {
+			regionStart = start
+		}
+		if regionStop > stop {
+			regionStop = stop
+		}
+		if regionStart >= regionStop {
+			continue
+		}
+
+		// Read region in chunks with overlap
+		addr := regionStart
+		for addr < regionStop {
+
+			if ctx.Err() != nil {
+				return results, ctx.Err()
+			}
+
+			readEnd := addr + chunkSize
+			if readEnd > regionStop {
+				readEnd = regionStop
+			}
+
+			readLen := readEnd - addr
+
+			// Read a chunk of memory directly without
+			// polluting the cache with scan data
+			data, err := m.readDirect(addr, readLen)
+			if err != nil {
+				// Skip unreadable chunks
+				addr = readEnd
+				continue
+			}
+
+			// Scan the chunk for pattern matches
+			scanLen := uintptr(len(data))
+			if scanLen < patLen {
+				break
+			}
+
+			for i := uintptr(0); i <= scanLen-patLen; i++ {
+
+				match := true
+				for j := uintptr(0); j < patLen; j++ {
+					if !patMask[j] && data[i+j] != patBytes[j] {
+						match = false
+						break
+					}
+				}
+
+				if match {
+					results = append(results, addr+i)
+
+					// Check if limit has been reached
+					if limit > 0 && len(results) >= limit {
+						return results, nil
+					}
+				}
+			}
+
+			// Advance by chunk minus overlap to catch
+			// patterns spanning chunk boundaries
+			if readLen > overlap {
+				addr += readLen - overlap
+			} else {
+				addr = readEnd
+			}
+		}
+	}
+
+	//----------------------------------------------------------------------------//
+
+	return results, nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// CreateCache engages the memory caching system with a pre-
+// allocated buffer. `blockLength` is the aligned block size
+// (must be a power of two). `blockBuffer` is the maximum
+// amount of data that can be read in a single cached read.
+// The sum of `blockLength` and `blockBuffer` defines the
+// amount of data read per native read. `initialSize` is the
+// starting buffer size. The cache grows by `enlargeSize`
+// when full (0 = no growth, falls back to native reads).
+// `maximumSize` caps the buffer (0 = unlimited). All values
+// must be divisible by `GetPageSize`. Returns an error if
+// any parameter is invalid.
+func (m *Memory) CreateCache(
+	blockLength, blockBuffer,
+	initialSize, enlargeSize,
+	maximumSize uintptr,
+) error {
+
+	//----------------------------------------------------------------------------//
+
+	pageSize := m.GetPageSize()
+
+	// Validate non-zero required parameters
+	if blockLength == 0 || blockBuffer == 0 || initialSize == 0 {
+		return errors.New("cache parameters must not be zero")
+	}
+
+	// Ensure alignment to page size
+	if blockLength%pageSize != 0 ||
+		blockBuffer%pageSize != 0 ||
+		initialSize%pageSize != 0 ||
+		enlargeSize%pageSize != 0 ||
+		maximumSize%pageSize != 0 {
+		return errors.New("cache parameters must be page-aligned")
+	}
+
+	// Block length must be a power of two
+	if blockLength&(blockLength-1) != 0 {
+		return errors.New("block length must be a power of two")
+	}
+
+	// Block length must be able to store the buffer
+	if blockLength < blockBuffer {
+		return errors.New("block length must be >= block buffer")
+	}
+
+	// Initial size must hold at least one block
+	entrySize := blockLength + blockBuffer
+	if initialSize < entrySize {
+		return errors.New("initial size must be >= block length + block buffer")
+	}
+
+	// Validate enlarge size
+	if enlargeSize != 0 && enlargeSize < entrySize {
+		return errors.New("enlarge size must be >= block length + block buffer")
+	}
+
+	// Validate maximum size
+	if maximumSize != 0 && maximumSize < initialSize {
+		return errors.New("maximum size must be >= initial size")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.blockLength = blockLength
+	m.blockBuffer = blockBuffer
+	m.cacheSize = initialSize
+	m.enlargeSize = enlargeSize
+	m.maximumSize = maximumSize
+	m.cacheNext = 0
+
+	// Pre-allocate the cache buffer
+	m.cache = make([]byte, initialSize)
+	m.cachePages = make(map[uintptr]uintptr)
+
+	return nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ClearCache removes all cached data without reallocating
+// the buffer. Call this function when the latest version of
+// the memory needs to be read, as the data in the cache may
+// be out of date.
 func (m *Memory) ClearCache() {
 
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	// Clear all data in memory cache
-	m.cache = make(map[uintptr][]byte)
+	m.cacheNext = 0
+	m.cachePages = make(map[uintptr]uintptr)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// DeleteCache disables caching and frees the buffer.
+func (m *Memory) DeleteCache() {
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	m.blockLength = 0
+	m.blockBuffer = 0
+	m.cacheSize = 0
+	m.enlargeSize = 0
+	m.maximumSize = 0
+	m.cacheNext = 0
+
+	m.cache = nil
+	m.cachePages = nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// IsCaching returns true if a cache has been created via
+// `CreateCache`.
+func (m *Memory) IsCaching() bool {
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	return m.cache != nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetCacheSize returns the current allocated size of the
+// cache buffer, in bytes. The cache may grow depending on
+// the cache parameters and how much data has been read.
+func (m *Memory) GetCacheSize() uintptr {
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	return m.cacheSize
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetPtrSize returns the size of a single pointer in the
+// target process, in bytes. Returns 8 for 64-bit and 4 for
+// 32-bit processes.
 func (m *Memory) GetPtrSize() uintptr {
 
 	// If 64-bit process
@@ -312,40 +788,36 @@ func (m *Memory) GetPtrSize() uintptr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) GetMinAddress() uintptr {
+// GetMinUserAddress returns the minimum accessible user-mode
+// address for the target process. The first 64 KB is reserved
+// by Windows for null pointer detection.
+func (m *Memory) GetMinUserAddress() uintptr {
 
 	return 0x10000
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) GetMaxAddress() uintptr {
+// GetMaxUserAddress returns the maximum accessible user-mode
+// address for the target process. This also serves as the
+// boundary between VAD and PTE region mapping in
+// `GetRegions`.
+func (m *Memory) GetMaxUserAddress() uintptr {
 
-	// We assume that this code is always running on a 64-bit Windows host.
-	// On such systems, 32-bit processes (WOW64) typically have a 2 GB virtual
-	// address space limit (up to 0x7FFF0000). If the process is linked with
-	// the `/LARGEADDRESSAWARE` flag, it may instead use up to 4 GB (0xFFFF0000).
+	// The DMA target is always a Windows system. On 64-bit Windows,
+	// user-mode virtual addresses span 0 to 0x7FFFFFFFFFFF (128 TB).
+	// This boundary is set by the OS regardless of whether the CPU
+	// supports 5-level paging (LA57). 0x800000000000 (2^47) marks
+	// the start of the non-canonical hole and the end of user space.
 	//
-	// Native 64-bit processes have access to a much larger address space,
-	// theoretically up to 128 TB (0x00007FFFFFFFFFFF). In practice, usable
-	// user-mode memory tops out below that, and we conservatively round to
-	// 0x800000000000 as a working limit.
+	// For 32-bit processes (WOW64), the default user-mode limit is
+	// 2 GB (0x80000000). Processes linked with `/LARGEADDRESSAWARE`
+	// may use up to 4 GB, but we use the conservative 2 GB default
+	// to avoid reading `EPROCESS->HighestUserAddress` per process.
 	//
-	// To simplify our memory model and avoid having to dynamically read
-	// `EPROCESS->HighestUserAddress` for every process, we use constants.
-	//
-	// These values are **intentionally rounded up** to skip over reserved
-	// memory regions at both ends of the user-mode address space. Windows
-	// reserves:
-	//   - The first 64 KB (0x00000000 to 0x0000FFFF) for null pointer and
-	//     stack overflow detection.
-	//   - The last few pages before the kernel-mode boundary for guard pages
-	//     and debugging traps.
-	//
-	// Therefore, we treat the "max user address" not only as the upper bound
-	// of valid user memory, but also as the point where kernel pages begin.
-	// This allows us to easily check for user vs kernel space addresses by
-	// comparing against this boundary.
+	// This value also serves as the boundary between VAD-based
+	// region mapping (user space) and PTE-based region mapping
+	// (kernel space) in `GetRegions`.
 
 	// If 64-bit process
 	if m.proc.is64Bit {
@@ -357,9 +829,173 @@ func (m *Memory) GetMaxAddress() uintptr {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetPageSize returns the size of a single page of memory,
+// in bytes. This value is typically 4096.
 func (m *Memory) GetPageSize() uintptr {
 
 	return 0x1000
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ReadData reads `length` bytes from the target process
+// starting at `address`. If a cache has been created via
+// `CreateCache` and `length` fits within `blockBuffer`,
+// reads are served from the cache. Otherwise, a direct
+// native read is performed. Use `ClearCache` when fresh
+// data is needed. Returns an error if `length` is zero,
+// `address` is in the null pointer reserved region, or
+// the read fails.
+func (m *Memory) ReadData(address uintptr, length uintptr) ([]byte, error) {
+
+	//----------------------------------------------------------------------------//
+
+	// Check length
+	if length == 0 {
+		return nil, errors.New("length must be greater than zero")
+	}
+
+	// Reject reads in the null pointer reserved region
+	if address < m.GetMinUserAddress() {
+		return nil, errors.New("address is below minimum address")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	// If caching is not enabled or the read is too large
+	// for the cache, perform a direct native read
+	if m.cache == nil || length > m.blockBuffer {
+		return m.readNative(address, length)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Compute block-aligned address and entry size
+	aligned := address &^ (m.blockLength - 1)
+	entrySize := m.blockLength + m.blockBuffer
+
+	// Check if the block has already been cached
+	if _, ok := m.cachePages[aligned]; !ok {
+
+		// Check if there is room in the cache buffer
+		if m.cacheSize-m.cacheNext < entrySize {
+
+			// Try to grow the cache buffer
+			if m.enlargeSize == 0 {
+				return m.readNative(address, length)
+			}
+
+			newSize := m.cacheSize + m.enlargeSize
+			if m.maximumSize != 0 && newSize > m.maximumSize {
+				return m.readNative(address, length)
+			}
+
+			// Allocate a larger buffer and copy existing data
+			newCache := make([]byte, newSize)
+			copy(newCache, m.cache[:m.cacheNext])
+			m.cache = newCache
+			m.cacheSize = newSize
+		}
+
+		// Read the full block from the target process
+		slot := m.cache[m.cacheNext : m.cacheNext+entrySize]
+		err := m.readInto(aligned, slot)
+		if err != nil {
+			// Fall back to a direct read on failure
+			return m.readNative(address, length)
+		}
+
+		// Record the slot offset in the page map
+		m.cachePages[aligned] = m.cacheNext
+		m.cacheNext += entrySize
+	}
+
+	m.stats.CachedReads++
+
+	// Copy the requested bytes from the cached block
+	offset := m.cachePages[aligned] + (address - aligned)
+	result := make([]byte, length)
+	copy(result, m.cache[offset:offset+length])
+
+	//----------------------------------------------------------------------------//
+
+	return result, nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// WriteData writes `data` to the target process starting at
+// `address`. Affected cache pages are invalidated so that
+// subsequent reads reflect the new data. Returns an error if
+// `data` is empty, `address` is in the null pointer reserved
+// region, or the write fails.
+func (m *Memory) WriteData(address uintptr, data []byte) error {
+
+	//----------------------------------------------------------------------------//
+
+	length := uintptr(len(data))
+
+	// Check length
+	if length == 0 {
+		return errors.New("length must be greater than zero")
+	}
+
+	// Reject writes in the null pointer reserved region
+	if address < m.GetMinUserAddress() {
+		return errors.New("address is below minimum address")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Retrieve size of a page
+	pageSize := m.GetPageSize()
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	var offset uintptr = 0
+	// Perform page writes
+	for offset < length {
+
+		// Calculate alignment to current start of page
+		aligned := (address + offset) &^ (pageSize - 1)
+
+		offsetInPage := (address + offset) - aligned
+
+		bytesToWrite := pageSize - offsetInPage
+		// Calculate how much to write to this page
+		if rem := length - offset; bytesToWrite > rem {
+			bytesToWrite = rem
+		}
+
+		// Write the chunk to the target address
+		err := m.writePage(
+			address+offset,
+			data[offset:offset+bytesToWrite],
+		)
+		if err != nil {
+			return err
+		}
+
+		// Invalidate cached block covering this address
+		if m.cache != nil && m.blockLength > 0 {
+			blockAligned := (address + offset) &^ (m.blockLength - 1)
+			delete(m.cachePages, blockAligned)
+		}
+
+		offset += bytesToWrite
+	}
+
+	//----------------------------------------------------------------------------//
+
+	return nil
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -392,7 +1028,8 @@ func (m *Memory) readPage(address uintptr) ([]byte, error) {
 	result := make([]byte, pageSize)
 
 	// Attempt to read the memory of the page
-	success, _, err := vmmDll.memReadEx.Call(
+	success, err := vmmCall(
+		vmmDll.memReadEx,
 		m.leech.handle,
 		uintptr(m.proc.pid),
 		address,
@@ -401,7 +1038,8 @@ func (m *Memory) readPage(address uintptr) ([]byte, error) {
 		uintptr(unsafe.Pointer(&bytesRead)),
 		uintptr(0x1), // VMMDLL_FLAG_NOCACHE
 	)
-	if err.(windows.Errno) != 0 {
+	if err != nil {
+		m.stats.ReadErrors++
 		return nil, errors.New(
 			"failed to read page",
 			errors.Uint32("pid", m.proc.pid),
@@ -410,6 +1048,7 @@ func (m *Memory) readPage(address uintptr) ([]byte, error) {
 		)
 	}
 	if success == 0 {
+		m.stats.ReadErrors++
 		return nil, errors.New(
 			"failed to read page",
 			errors.Uint32("pid", m.proc.pid),
@@ -418,6 +1057,7 @@ func (m *Memory) readPage(address uintptr) ([]byte, error) {
 	}
 
 	if uintptr(bytesRead) != pageSize {
+		m.stats.ReadErrors++
 		return result, errors.New(
 			"not enough bytes have been read",
 			errors.Uint32("pid", m.proc.pid),
@@ -428,6 +1068,7 @@ func (m *Memory) readPage(address uintptr) ([]byte, error) {
 
 	//----------------------------------------------------------------------------//
 
+	m.stats.SystemReads++
 	return result, nil
 
 	//----------------------------------------------------------------------------//
@@ -435,87 +1076,217 @@ func (m *Memory) readPage(address uintptr) ([]byte, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) ReadData(address uintptr, length uintptr) ([]byte, error) {
+func (m *Memory) readDirect(address uintptr, length uintptr) ([]byte, error) {
 
-	// Check length
-	if length == 0 {
-		return nil, errors.New("length must be greater than zero")
+	//----------------------------------------------------------------------------//
+
+	// Lock for retrieval
+	m.leech.lock.RLock()
+	defer m.leech.lock.RUnlock()
+
+	// Make sure that handle and PID are valid
+	if m.leech.handle == 0 || m.proc.pid == 0 {
+		return nil, errors.New("process is not valid")
 	}
 
-	// Address is within min bounds
-	if address < m.GetMinAddress() {
-		return nil, errors.New("address is below minimum address")
-	}
+	//----------------------------------------------------------------------------//
 
-	// Address is within max bounds
-	if address+length > m.GetMaxAddress() {
-		return nil, errors.New("address is above maximum address")
-	}
-
-	var offset uintptr = 0
-	// Make buffer to hold result
+	var bytesRead uint32
+	// Make buffer to hold the data
 	result := make([]byte, length)
 
-	// Retrieve size of a page
+	// Attempt to read the memory directly
+	success, err := vmmCall(
+		vmmDll.memReadEx,
+		m.leech.handle,
+		uintptr(m.proc.pid),
+		address,
+		uintptr(unsafe.Pointer(&result[0])),
+		length,
+		uintptr(unsafe.Pointer(&bytesRead)),
+		uintptr(0x1), // VMMDLL_FLAG_NOCACHE
+	)
+	if err != nil {
+		return nil, errors.New(
+			"failed to read memory",
+			errors.Uint32("pid", m.proc.pid),
+			errors.Uintptr("address", address),
+			errors.Error("error", err),
+		)
+	}
+	if success == 0 {
+		return nil, errors.New(
+			"failed to read memory",
+			errors.Uint32("pid", m.proc.pid),
+			errors.Uintptr("address", address),
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	return result[:bytesRead], nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (m *Memory) readNative(address uintptr, length uintptr) ([]byte, error) {
+
+	//----------------------------------------------------------------------------//
+
 	pageSize := m.GetPageSize()
+	result := make([]byte, length)
+	var offset uintptr = 0
 
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	// Perform page reads
+	// Perform page-aligned reads
 	for offset < length {
 
 		// Calculate alignment to current start of page
 		aligned := (address + offset) &^ (pageSize - 1)
 
-		// Check if page is in cache
-		cache, ok := m.cache[aligned]
-		if !ok {
-			// Try and read the entire page
-			data, err := m.readPage(aligned)
-			if err != nil {
-				return nil, err
-			}
-
-			// Cache read page data
-			m.cache[aligned] = data
-			cache = data
-		}
-
 		offsetInPage := (address + offset) - aligned
 
-		bytesToCopy := pageSize - offsetInPage
-		// Calculate how much to copy from this page
-		if rem := length - offset; bytesToCopy > rem {
-			bytesToCopy = rem
+		bytesToRead := pageSize - offsetInPage
+		// Calculate how much to read from this page
+		if rem := length - offset; bytesToRead > rem {
+			bytesToRead = rem
 		}
 
-		// Copy portion from cached page into result
-		copy(result[offset:], cache[offsetInPage:offsetInPage+bytesToCopy])
-		offset += bytesToCopy
+		// Read directly into the result buffer
+		data, err := m.readPage(aligned)
+		if err != nil {
+			return nil, err
+		}
+
+		copy(result[offset:], data[offsetInPage:offsetInPage+bytesToRead])
+		offset += bytesToRead
 	}
 
+	//----------------------------------------------------------------------------//
+
 	return result, nil
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-type MemType int
+func (m *Memory) readInto(address uintptr, buf []byte) error {
 
-const (
-	MemTypeBuffer  MemType = 0x0
-	MemTypeInt8    MemType = 0x1
-	MemTypeInt16   MemType = 0x2
-	MemTypeInt32   MemType = 0x3
-	MemTypeInt64   MemType = 0x4
-	MemTypeFloat32 MemType = 0x5
-	MemTypeFloat64 MemType = 0x6
-	MemTypeBool    MemType = 0x7
-	MemTypeString  MemType = 0x8
-)
+	//----------------------------------------------------------------------------//
+
+	// Lock for retrieval
+	m.leech.lock.RLock()
+	defer m.leech.lock.RUnlock()
+
+	// Make sure that handle and PID are valid
+	if m.leech.handle == 0 || m.proc.pid == 0 {
+		return errors.New("process is not valid")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	var bytesRead uint32
+
+	// Read directly into the provided buffer
+	success, err := vmmCall(
+		vmmDll.memReadEx,
+		m.leech.handle,
+		uintptr(m.proc.pid),
+		address,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(len(buf)),
+		uintptr(unsafe.Pointer(&bytesRead)),
+		uintptr(0x1), // VMMDLL_FLAG_NOCACHE
+	)
+	if err != nil {
+		m.stats.ReadErrors++
+		return errors.New(
+			"failed to read memory",
+			errors.Uint32("pid", m.proc.pid),
+			errors.Uintptr("address", address),
+			errors.Error("error", err),
+		)
+	}
+	if success == 0 {
+		m.stats.ReadErrors++
+		return errors.New(
+			"failed to read memory",
+			errors.Uint32("pid", m.proc.pid),
+			errors.Uintptr("address", address),
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	m.stats.SystemReads++
+	return nil
+
+	//----------------------------------------------------------------------------//
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (m *Memory) writePage(address uintptr, data []byte) error {
+
+	//----------------------------------------------------------------------------//
+
+	// Lock for write
+	m.leech.lock.RLock()
+	defer m.leech.lock.RUnlock()
+
+	// Make sure that handle and PID are valid
+	if m.leech.handle == 0 || m.proc.pid == 0 {
+		return errors.New("process is not valid")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Attempt to write the memory
+	success, err := vmmCall(
+		vmmDll.memWrite,
+		m.leech.handle,
+		uintptr(m.proc.pid),
+		address,
+		uintptr(unsafe.Pointer(&data[0])),
+		uintptr(len(data)),
+	)
+	if err != nil {
+		m.stats.WriteErrors++
+		return errors.New(
+			"failed to write memory",
+			errors.Uint32("pid", m.proc.pid),
+			errors.Uintptr("address", address),
+			errors.Error("error", err),
+		)
+	}
+	if success == 0 {
+		m.stats.WriteErrors++
+		return errors.New(
+			"failed to write memory",
+			errors.Uint32("pid", m.proc.pid),
+			errors.Uintptr("address", address),
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	m.stats.SystemWrites++
+	return nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ReadTypes reads `count` values of the given `memType` from
+// the target `address`. Each value is `length` bytes and
+// values are spaced by `stride` bytes. If `stride` is zero,
+// it defaults to `length`. Returns a slice of `any` values
+// that must be type-asserted by the caller. The typed methods
+// (ReadInt32, ReadFloat64, etc.) are simpler alternatives for
+// common types.
 func (m *Memory) ReadTypes(
 	address uintptr,
 	memType MemType,
@@ -541,7 +1312,15 @@ func (m *Memory) ReadTypes(
 		)
 	}
 
-	size := count*stride + length - stride
+	// Check for overflow in total size calculation
+	size := uint64(count)*uint64(stride) + uint64(length) - uint64(stride)
+	if size > uint64(^uint32(0)) {
+		return nil, errors.New(
+			"read size overflow",
+			errors.Uint32("count", count),
+			errors.Uint32("stride", stride),
+		)
+	}
 	// Try and read all required memory in one call
 	data, err := m.ReadData(address, uintptr(size))
 	if err != nil {
@@ -599,27 +1378,20 @@ func (m *Memory) ReadTypes(
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadInt8 reads a signed 8-bit integer from the address.
 func (m *Memory) ReadInt8(address uintptr) (int8, error) {
 
-	res, err := m.ReadTypes(address, MemTypeInt8, 1, 1, 0)
+	data, err := m.ReadData(address, 1)
 	if err != nil {
 		return 0, err
 	}
 
-	if len(res) != 1 {
-		return 0, errors.New("not enough results for read type")
-	}
-
-	val, ok := res[0].(int8)
-	if !ok {
-		return 0, errors.New("failed to cast to the final type")
-	}
-
-	return val, nil
+	return int8(data[0]), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadInt8s reads an array of signed 8-bit integers.
 func (m *Memory) ReadInt8s(address uintptr, count, stride uint32) ([]int8, error) {
 
 	res, err := m.ReadTypes(address, MemTypeInt8, 1, count, stride)
@@ -627,18 +1399,9 @@ func (m *Memory) ReadInt8s(address uintptr, count, stride uint32) ([]int8, error
 		return nil, err
 	}
 
-	if len(res) != int(count) {
-		return nil, errors.New("not enough results for read type")
-	}
-
-	out := make([]int8, count)
+	out := make([]int8, len(res))
 	for i, v := range res {
-		val, ok := v.(int8)
-		if !ok {
-			return nil, errors.New("failed to cast to final type")
-		}
-
-		out[i] = val
+		out[i] = v.(int8)
 	}
 
 	return out, nil
@@ -646,27 +1409,20 @@ func (m *Memory) ReadInt8s(address uintptr, count, stride uint32) ([]int8, error
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadInt16 reads a signed 16-bit integer from the address.
 func (m *Memory) ReadInt16(address uintptr) (int16, error) {
 
-	res, err := m.ReadTypes(address, MemTypeInt16, 2, 1, 0)
+	data, err := m.ReadData(address, 2)
 	if err != nil {
 		return 0, err
 	}
 
-	if len(res) != 1 {
-		return 0, errors.New("not enough results for read type")
-	}
-
-	val, ok := res[0].(int16)
-	if !ok {
-		return 0, errors.New("failed to cast to the final type")
-	}
-
-	return val, nil
+	return int16(binary.LittleEndian.Uint16(data)), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadInt16s reads an array of signed 16-bit integers.
 func (m *Memory) ReadInt16s(address uintptr, count, stride uint32) ([]int16, error) {
 
 	res, err := m.ReadTypes(address, MemTypeInt16, 2, count, stride)
@@ -674,18 +1430,9 @@ func (m *Memory) ReadInt16s(address uintptr, count, stride uint32) ([]int16, err
 		return nil, err
 	}
 
-	if len(res) != int(count) {
-		return nil, errors.New("not enough results for read type")
-	}
-
-	out := make([]int16, count)
+	out := make([]int16, len(res))
 	for i, v := range res {
-		val, ok := v.(int16)
-		if !ok {
-			return nil, errors.New("failed to cast to final type")
-		}
-
-		out[i] = val
+		out[i] = v.(int16)
 	}
 
 	return out, nil
@@ -693,27 +1440,20 @@ func (m *Memory) ReadInt16s(address uintptr, count, stride uint32) ([]int16, err
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadInt32 reads a signed 32-bit integer from the address.
 func (m *Memory) ReadInt32(address uintptr) (int32, error) {
 
-	res, err := m.ReadTypes(address, MemTypeInt32, 4, 1, 0)
+	data, err := m.ReadData(address, 4)
 	if err != nil {
 		return 0, err
 	}
 
-	if len(res) != 1 {
-		return 0, errors.New("not enough results for read type")
-	}
-
-	val, ok := res[0].(int32)
-	if !ok {
-		return 0, errors.New("failed to cast to the final type")
-	}
-
-	return val, nil
+	return int32(binary.LittleEndian.Uint32(data)), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadInt32s reads an array of signed 32-bit integers.
 func (m *Memory) ReadInt32s(address uintptr, count, stride uint32) ([]int32, error) {
 
 	res, err := m.ReadTypes(address, MemTypeInt32, 4, count, stride)
@@ -721,18 +1461,9 @@ func (m *Memory) ReadInt32s(address uintptr, count, stride uint32) ([]int32, err
 		return nil, err
 	}
 
-	if len(res) != int(count) {
-		return nil, errors.New("not enough results for read type")
-	}
-
-	out := make([]int32, count)
+	out := make([]int32, len(res))
 	for i, v := range res {
-		val, ok := v.(int32)
-		if !ok {
-			return nil, errors.New("failed to cast to final type")
-		}
-
-		out[i] = val
+		out[i] = v.(int32)
 	}
 
 	return out, nil
@@ -740,27 +1471,20 @@ func (m *Memory) ReadInt32s(address uintptr, count, stride uint32) ([]int32, err
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadInt64 reads a signed 64-bit integer from the address.
 func (m *Memory) ReadInt64(address uintptr) (int64, error) {
 
-	res, err := m.ReadTypes(address, MemTypeInt64, 8, 1, 0)
+	data, err := m.ReadData(address, 8)
 	if err != nil {
 		return 0, err
 	}
 
-	if len(res) != 1 {
-		return 0, errors.New("not enough results for read type")
-	}
-
-	val, ok := res[0].(int64)
-	if !ok {
-		return 0, errors.New("failed to cast to the final type")
-	}
-
-	return val, nil
+	return int64(binary.LittleEndian.Uint64(data)), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadInt64s reads an array of signed 64-bit integers.
 func (m *Memory) ReadInt64s(address uintptr, count, stride uint32) ([]int64, error) {
 
 	res, err := m.ReadTypes(address, MemTypeInt64, 8, count, stride)
@@ -768,18 +1492,9 @@ func (m *Memory) ReadInt64s(address uintptr, count, stride uint32) ([]int64, err
 		return nil, err
 	}
 
-	if len(res) != int(count) {
-		return nil, errors.New("not enough results for read type")
-	}
-
-	out := make([]int64, count)
+	out := make([]int64, len(res))
 	for i, v := range res {
-		val, ok := v.(int64)
-		if !ok {
-			return nil, errors.New("failed to cast to final type")
-		}
-
-		out[i] = val
+		out[i] = v.(int64)
 	}
 
 	return out, nil
@@ -787,27 +1502,20 @@ func (m *Memory) ReadInt64s(address uintptr, count, stride uint32) ([]int64, err
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadFloat32 reads a 32-bit float from the address.
 func (m *Memory) ReadFloat32(address uintptr) (float32, error) {
 
-	res, err := m.ReadTypes(address, MemTypeFloat32, 4, 1, 0)
+	data, err := m.ReadData(address, 4)
 	if err != nil {
 		return 0, err
 	}
 
-	if len(res) != 1 {
-		return 0, errors.New("not enough results for read type")
-	}
-
-	val, ok := res[0].(float32)
-	if !ok {
-		return 0, errors.New("failed to cast to the final type")
-	}
-
-	return val, nil
+	return math.Float32frombits(binary.LittleEndian.Uint32(data)), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadFloat32s reads an array of 32-bit floats.
 func (m *Memory) ReadFloat32s(address uintptr, count, stride uint32) ([]float32, error) {
 
 	res, err := m.ReadTypes(address, MemTypeFloat32, 4, count, stride)
@@ -815,18 +1523,9 @@ func (m *Memory) ReadFloat32s(address uintptr, count, stride uint32) ([]float32,
 		return nil, err
 	}
 
-	if len(res) != int(count) {
-		return nil, errors.New("not enough results for read type")
-	}
-
-	out := make([]float32, count)
+	out := make([]float32, len(res))
 	for i, v := range res {
-		val, ok := v.(float32)
-		if !ok {
-			return nil, errors.New("failed to cast to final type")
-		}
-
-		out[i] = val
+		out[i] = v.(float32)
 	}
 
 	return out, nil
@@ -834,27 +1533,20 @@ func (m *Memory) ReadFloat32s(address uintptr, count, stride uint32) ([]float32,
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadFloat64 reads a 64-bit float from the address.
 func (m *Memory) ReadFloat64(address uintptr) (float64, error) {
 
-	res, err := m.ReadTypes(address, MemTypeFloat64, 8, 1, 0)
+	data, err := m.ReadData(address, 8)
 	if err != nil {
 		return 0, err
 	}
 
-	if len(res) != 1 {
-		return 0, errors.New("not enough results for read type")
-	}
-
-	val, ok := res[0].(float64)
-	if !ok {
-		return 0, errors.New("failed to cast to the final type")
-	}
-
-	return val, nil
+	return math.Float64frombits(binary.LittleEndian.Uint64(data)), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadFloat64s reads an array of 64-bit floats.
 func (m *Memory) ReadFloat64s(address uintptr, count, stride uint32) ([]float64, error) {
 
 	res, err := m.ReadTypes(address, MemTypeFloat64, 8, count, stride)
@@ -862,18 +1554,9 @@ func (m *Memory) ReadFloat64s(address uintptr, count, stride uint32) ([]float64,
 		return nil, err
 	}
 
-	if len(res) != int(count) {
-		return nil, errors.New("not enough results for read type")
-	}
-
-	out := make([]float64, count)
+	out := make([]float64, len(res))
 	for i, v := range res {
-		val, ok := v.(float64)
-		if !ok {
-			return nil, errors.New("failed to cast to final type")
-		}
-
-		out[i] = val
+		out[i] = v.(float64)
 	}
 
 	return out, nil
@@ -881,56 +1564,31 @@ func (m *Memory) ReadFloat64s(address uintptr, count, stride uint32) ([]float64,
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadPtr reads a pointer-sized value from the address. The
+// size is determined by the target process bitness.
 func (m *Memory) ReadPtr(address uintptr) (uintptr, error) {
-
-	//----------------------------------------------------------------------------//
 
 	// If 64-bit process
 	if m.proc.is64Bit {
-
-		res, err := m.ReadTypes(address, MemTypeInt64, 8, 1, 0)
+		data, err := m.ReadData(address, 8)
 		if err != nil {
 			return 0, err
 		}
-
-		if len(res) != 1 {
-			return 0, errors.New("not enough results for read type")
-		}
-
-		val, ok := res[0].(int64)
-		if !ok {
-			return 0, errors.New("failed to cast to the final type")
-		}
-
-		return uintptr(val), nil
+		return uintptr(binary.LittleEndian.Uint64(data)), nil
 	}
 
-	//----------------------------------------------------------------------------//
-
-	res, err := m.ReadTypes(address, MemTypeInt32, 4, 1, 0)
+	data, err := m.ReadData(address, 4)
 	if err != nil {
 		return 0, err
 	}
 
-	if len(res) != 1 {
-		return 0, errors.New("not enough results for read type")
-	}
-
-	val, ok := res[0].(int32)
-	if !ok {
-		return 0, errors.New("failed to cast to the final type")
-	}
-
-	return uintptr(val), nil
-
-	//----------------------------------------------------------------------------//
+	return uintptr(binary.LittleEndian.Uint32(data)), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadPtrs reads an array of pointer-sized values.
 func (m *Memory) ReadPtrs(address uintptr, count, stride uint32) ([]uintptr, error) {
-
-	//----------------------------------------------------------------------------//
 
 	// If 64-bit process
 	if m.proc.is64Bit {
@@ -940,72 +1598,43 @@ func (m *Memory) ReadPtrs(address uintptr, count, stride uint32) ([]uintptr, err
 			return nil, err
 		}
 
-		if len(res) != int(count) {
-			return nil, errors.New("not enough results for read type")
-		}
-
-		out := make([]uintptr, count)
+		out := make([]uintptr, len(res))
 		for i, v := range res {
-			val, ok := v.(int64)
-			if !ok {
-				return nil, errors.New("failed to cast to final type")
-			}
-
-			out[i] = uintptr(val)
+			out[i] = uintptr(v.(int64))
 		}
 
 		return out, nil
 	}
-
-	//----------------------------------------------------------------------------//
 
 	res, err := m.ReadTypes(address, MemTypeInt32, 4, count, stride)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(res) != int(count) {
-		return nil, errors.New("not enough results for read type")
-	}
-
-	out := make([]uintptr, count)
+	out := make([]uintptr, len(res))
 	for i, v := range res {
-		val, ok := v.(int32)
-		if !ok {
-			return nil, errors.New("failed to cast to final type")
-		}
-
-		out[i] = uintptr(val)
+		out[i] = uintptr(v.(int32))
 	}
 
 	return out, nil
-
-	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadBool reads a boolean value (1 byte) from the address.
 func (m *Memory) ReadBool(address uintptr) (bool, error) {
 
-	res, err := m.ReadTypes(address, MemTypeBool, 1, 1, 0)
+	data, err := m.ReadData(address, 1)
 	if err != nil {
 		return false, err
 	}
 
-	if len(res) != 1 {
-		return false, errors.New("not enough results for read type")
-	}
-
-	val, ok := res[0].(bool)
-	if !ok {
-		return false, errors.New("failed to cast to the final type")
-	}
-
-	return val, nil
+	return data[0] != 0, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadBools reads an array of boolean values.
 func (m *Memory) ReadBools(address uintptr, count, stride uint32) ([]bool, error) {
 
 	res, err := m.ReadTypes(address, MemTypeBool, 1, count, stride)
@@ -1013,18 +1642,9 @@ func (m *Memory) ReadBools(address uintptr, count, stride uint32) ([]bool, error
 		return nil, err
 	}
 
-	if len(res) != int(count) {
-		return nil, errors.New("not enough results for read type")
-	}
-
-	out := make([]bool, count)
+	out := make([]bool, len(res))
 	for i, v := range res {
-		val, ok := v.(bool)
-		if !ok {
-			return nil, errors.New("failed to cast to final type")
-		}
-
-		out[i] = val
+		out[i] = v.(bool)
 	}
 
 	return out, nil
@@ -1032,27 +1652,21 @@ func (m *Memory) ReadBools(address uintptr, count, stride uint32) ([]bool, error
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadString reads a null-terminated C string of the given
+// maximum length from the address.
 func (m *Memory) ReadString(address uintptr, length uint32) (string, error) {
 
-	res, err := m.ReadTypes(address, MemTypeString, length, 1, 0)
+	data, err := m.ReadData(address, uintptr(length))
 	if err != nil {
 		return "", err
 	}
 
-	if len(res) != 1 {
-		return "", errors.New("not enough results for read type")
-	}
-
-	val, ok := res[0].(string)
-	if !ok {
-		return "", errors.New("failed to cast to the final type")
-	}
-
-	return val, nil
+	return cStrToString(data), nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ReadStrings reads an array of null-terminated C strings.
 func (m *Memory) ReadStrings(address uintptr, length, count, stride uint32) ([]string, error) {
 
 	res, err := m.ReadTypes(address, MemTypeString, length, count, stride)
@@ -1060,19 +1674,95 @@ func (m *Memory) ReadStrings(address uintptr, length, count, stride uint32) ([]s
 		return nil, err
 	}
 
-	if len(res) != int(count) {
-		return nil, errors.New("not enough results for read type")
-	}
-
-	out := make([]string, count)
+	out := make([]string, len(res))
 	for i, v := range res {
-		val, ok := v.(string)
-		if !ok {
-			return nil, errors.New("failed to cast to final type")
-		}
-
-		out[i] = val
+		out[i] = v.(string)
 	}
 
 	return out, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// WriteInt8 writes a signed 8-bit integer to the address.
+func (m *Memory) WriteInt8(address uintptr, value int8) error {
+
+	return m.WriteData(address, []byte{byte(value)})
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// WriteInt16 writes a signed 16-bit integer to the address.
+func (m *Memory) WriteInt16(address uintptr, value int16) error {
+
+	data := make([]byte, 2)
+	binary.LittleEndian.PutUint16(data, uint16(value))
+	return m.WriteData(address, data)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// WriteInt32 writes a signed 32-bit integer to the address.
+func (m *Memory) WriteInt32(address uintptr, value int32) error {
+
+	data := make([]byte, 4)
+	binary.LittleEndian.PutUint32(data, uint32(value))
+	return m.WriteData(address, data)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// WriteInt64 writes a signed 64-bit integer to the address.
+func (m *Memory) WriteInt64(address uintptr, value int64) error {
+
+	data := make([]byte, 8)
+	binary.LittleEndian.PutUint64(data, uint64(value))
+	return m.WriteData(address, data)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// WriteFloat32 writes a 32-bit float to the address.
+func (m *Memory) WriteFloat32(address uintptr, value float32) error {
+
+	data := make([]byte, 4)
+	binary.LittleEndian.PutUint32(data, math.Float32bits(value))
+	return m.WriteData(address, data)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// WriteFloat64 writes a 64-bit float to the address.
+func (m *Memory) WriteFloat64(address uintptr, value float64) error {
+
+	data := make([]byte, 8)
+	binary.LittleEndian.PutUint64(data, math.Float64bits(value))
+	return m.WriteData(address, data)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// WritePtr writes a pointer-sized value to the address. The
+// size is determined by the target process bitness.
+func (m *Memory) WritePtr(address uintptr, value uintptr) error {
+
+	// If 64-bit process
+	if m.proc.is64Bit {
+		return m.WriteInt64(address, int64(value))
+	}
+
+	return m.WriteInt32(address, int32(value))
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// WriteBool writes a boolean value (1 byte) to the address.
+func (m *Memory) WriteBool(address uintptr, value bool) error {
+
+	b := byte(0)
+	if value {
+		b = 1
+	}
+
+	return m.WriteData(address, []byte{b})
 }

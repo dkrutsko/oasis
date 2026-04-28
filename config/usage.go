@@ -27,6 +27,9 @@ ARGUMENTS
 
 	-debug (false) - boolean
 	 Whether to output extended logging information for debugging.
+
+	-viewer (false) - boolean
+	 Launch the debug viewer to preview overlay output.
 `,
 	)
 }

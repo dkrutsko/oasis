@@ -15,6 +15,7 @@ import (
 	"github.com/dkrutsko/oasis/game"
 	"github.com/dkrutsko/oasis/leech"
 	"github.com/dkrutsko/oasis/logger"
+	"github.com/dkrutsko/oasis/overlay"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -22,13 +23,15 @@ import (
 type exitCodeType int
 
 const (
-	exitCodeSuccess     exitCodeType = 1
-	exitCodeLoadConfig  exitCodeType = 2
-	exitCodeCreateLeech exitCodeType = 3
-	exitCodeForceExit   exitCodeType = 4
-	exitCodeCreateGame  exitCodeType = 5
-	exitCodeDaemonError exitCodeType = 6
-	exitCodeCloseLeech  exitCodeType = 7
+	exitCodeSuccess exitCodeType = iota
+	exitCodeLoadConfig
+	exitCodeCreateLeech
+	exitCodeForceExit
+	exitCodeCreateGame
+	exitCodeDaemonError
+	exitCodeCloseLeech
+	exitCodeCreateOverlay
+	exitCodeViewerError
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -111,7 +114,29 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
-	l := leech.New("-device", "fpga")
+	// Run in viewer mode if requested
+	if cfg.Viewer {
+		v := overlay.NewViewer()
+
+		err := v.Run()
+		v.Close()
+
+		if err != nil {
+			logger.Err(
+				"failed to run viewer",
+				logger.Error("error", err),
+			)
+			os.Exit(int(exitCodeViewerError))
+		}
+
+		return
+	}
+
+	//----------------------------------------------------------------------------//
+
+	l := leech.New(&leech.Options{
+		Args: []string{"-device", "fpga"},
+	})
 
 	err := l.Create()
 	if err != nil {
@@ -152,7 +177,18 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
-	// TODO: shared memory and off-screen canvas
+	// Start the overlay renderer
+	o, err := overlay.NewOverlay(g)
+	if err != nil {
+		logger.Err(
+			"failed to create overlay",
+			logger.Error("error", err),
+		)
+		os.Exit(int(exitCodeCreateOverlay))
+	}
+
+	defer o.Close()
+	o.Start(group, gctx)
 
 	//----------------------------------------------------------------------------//
 

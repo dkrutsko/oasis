@@ -4,14 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
-
-	"github.com/dkrutsko/oasis/errors"
 )
-
-
 
 //----------------------------------------------------------------------------//
 // Library                                                                    //
@@ -19,134 +12,16 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
-const vmmRelease = "5.14.5"
-
-////////////////////////////////////////////////////////////////////////////////
-
-type VmmDll struct {
-	dll *windows.DLL
-
-	initializeEx *windows.Proc
-	close        *windows.Proc
-	memSize      *windows.Proc
-	memFree      *windows.Proc
-
-	processGetInformation    *windows.Proc
-	processGetInformationAll *windows.Proc
-
-	mapGetModuleW *windows.Proc
-	mapGetVadW    *windows.Proc
-	mapGetPteW    *windows.Proc
-	memReadEx     *windows.Proc
-}
+// VmmRelease is the VMMDLL version this package was built
+// against.
+const VmmRelease = "5.14.5"
 
 ////////////////////////////////////////////////////////////////////////////////
 
 var (
-	vmmDll     *VmmDll
+	vmmDll     *vmmLib
 	vmmDllLock sync.Mutex
 )
-
-////////////////////////////////////////////////////////////////////////////////
-
-func loadVmmDll() error {
-
-	//----------------------------------------------------------------------------//
-
-	// If already loaded
-	// Without using lock
-	if vmmDll != nil {
-		return nil
-	}
-
-	// Lock for load
-	vmmDllLock.Lock()
-	defer vmmDllLock.Unlock()
-
-	// If already loaded
-	if vmmDll != nil {
-		return nil
-	}
-
-	result := &VmmDll{}
-
-	//----------------------------------------------------------------------------//
-
-	var err error
-	// Attempt to load the VMM dynamic library
-	result.dll, err = windows.LoadDLL("vmm.dll")
-	if err != nil {
-		return errors.New(
-			"failed to load vmm.dll",
-			errors.Error("error", err),
-		)
-	}
-
-	//----------------------------------------------------------------------------//
-
-	result.initializeEx, err = result.dll.FindProc("VMMDLL_InitializeEx")
-	if err != nil {
-		return err
-	}
-
-	result.close, err = result.dll.FindProc("VMMDLL_Close")
-	if err != nil {
-		return err
-	}
-
-	result.memSize, err = result.dll.FindProc("VMMDLL_MemSize")
-	if err != nil {
-		return err
-	}
-
-	result.memFree, err = result.dll.FindProc("VMMDLL_MemFree")
-	if err != nil {
-		return err
-	}
-
-	//----------------------------------------------------------------------------//
-
-	result.processGetInformation, err = result.dll.FindProc("VMMDLL_ProcessGetInformation")
-	if err != nil {
-		return err
-	}
-
-	result.processGetInformationAll, err = result.dll.FindProc("VMMDLL_ProcessGetInformationAll")
-	if err != nil {
-		return err
-	}
-
-	//----------------------------------------------------------------------------//
-
-	result.mapGetModuleW, err = result.dll.FindProc("VMMDLL_Map_GetModuleW")
-	if err != nil {
-		return err
-	}
-
-	result.mapGetVadW, err = result.dll.FindProc("VMMDLL_Map_GetVadW")
-	if err != nil {
-		return err
-	}
-
-	result.mapGetPteW, err = result.dll.FindProc("VMMDLL_Map_GetPteW")
-	if err != nil {
-		return err
-	}
-
-	result.memReadEx, err = result.dll.FindProc("VMMDLL_MemReadEx")
-	if err != nil {
-		return err
-	}
-
-	//----------------------------------------------------------------------------//
-
-	vmmDll = result
-	return nil
-
-	//----------------------------------------------------------------------------//
-}
-
-
 
 //----------------------------------------------------------------------------//
 // Helpers                                                                    //
@@ -157,10 +32,10 @@ func loadVmmDll() error {
 func cStrToString(b []byte) string {
 
 	// Find null-terminator
-	n := unsafe.Sizeof(b)
+	n := len(b)
 	for i, c := range b {
 		if c == 0 {
-			n = uintptr(i)
+			n = i
 			break
 		}
 	}
@@ -168,22 +43,6 @@ func cStrToString(b []byte) string {
 	// Convert string up to null-terminator
 	return strings.TrimSpace(string(b[:n]))
 }
-
-////////////////////////////////////////////////////////////////////////////////
-
-func wideToString(ptr uintptr) string {
-
-	if ptr == 0 {
-		return ""
-	}
-
-	// Convert wide string to string
-	return windows.UTF16PtrToString(
-		(*uint16)(unsafe.Pointer(ptr)),
-	)
-}
-
-
 
 //----------------------------------------------------------------------------//
 // Process Information                                                        //
@@ -346,8 +205,6 @@ type vmmProcessInformation struct {
 	}
 }
 
-
-
 //----------------------------------------------------------------------------//
 // Map Module                                                                 //
 //----------------------------------------------------------------------------//
@@ -423,8 +280,6 @@ type vmmMapModule struct {
 	modules       uintptr
 }
 
-
-
 //----------------------------------------------------------------------------//
 // Map VAD                                                                    //
 //----------------------------------------------------------------------------//
@@ -437,22 +292,26 @@ const (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Windows page protection flags matching the values in
+// `Region.Access`. The AccessPage* constants are composite
+// masks for testing readable, writable, and executable
+// permissions.
 const (
-	PAGE_NOACCESS          = 0x01
-	PAGE_READONLY          = 0x02
-	PAGE_READWRITE         = 0x04
-	PAGE_WRITECOPY         = 0x08
-	PAGE_EXECUTE           = 0x10
-	PAGE_EXECUTE_READ      = 0x20
-	PAGE_EXECUTE_READWRITE = 0x40
-	PAGE_EXECUTE_WRITECOPY = 0x80
-	PAGE_GUARD             = 0x100
-	PAGE_NOCACHE           = 0x200
-	PAGE_WRITECOMBINE      = 0x400
+	PageNoAccess         = 0x01
+	PageReadOnly         = 0x02
+	PageReadWrite        = 0x04
+	PageWriteCopy        = 0x08
+	PageExecute          = 0x10
+	PageExecuteRead      = 0x20
+	PageExecuteReadWrite = 0x40
+	PageExecuteWriteCopy = 0x80
+	PageGuard            = 0x100
+	PageNoCache          = 0x200
+	PageWriteCombine     = 0x400
 
-	ACCESS_PAGE_R = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY
-	ACCESS_PAGE_W = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY
-	ACCESS_PAGE_X = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY
+	AccessPageR = PageReadOnly | PageReadWrite | PageWriteCopy | PageExecute | PageExecuteRead | PageExecuteReadWrite | PageExecuteWriteCopy
+	AccessPageW = PageReadWrite | PageWriteCopy | PageExecuteReadWrite | PageExecuteWriteCopy
+	AccessPageX = PageExecute | PageExecuteRead | PageExecuteReadWrite | PageExecuteWriteCopy
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -483,10 +342,10 @@ func (f vmmMapVadEntryFlags0) Decode() vmmMapVadEntryFlags0Info {
 	flags := uint32(f)
 	// Convert flags into structure
 	return vmmMapVadEntryFlags0Info{
-		vadType:         ((flags >>  0) & 0x07),
-		protection:      ((flags >>  3) & 0x1F),
-		isImage:         ((flags >>  8) & 0x01) != 0,
-		isFile:          ((flags >>  9) & 0x01) != 0,
+		vadType:         ((flags >> 0) & 0x07),
+		protection:      ((flags >> 3) & 0x1F),
+		isImage:         ((flags >> 8) & 0x01) != 0,
+		isFile:          ((flags >> 9) & 0x01) != 0,
 		isPageFile:      ((flags >> 10) & 0x01) != 0,
 		isPrivateMemory: ((flags >> 11) & 0x01) != 0,
 		isTeb:           ((flags >> 12) & 0x01) != 0,
@@ -516,7 +375,7 @@ func (f vmmMapVadEntryFlags1) Decode() vmmMapVadEntryFlags1Info {
 	flags := uint32(f)
 	// Convert flags into structure
 	return vmmMapVadEntryFlags1Info{
-		commitCharge: ((flags >>  0) & 0x7FFFFFFF),
+		commitCharge: ((flags >> 0) & 0x7FFFFFFF),
 		isCommitted:  ((flags >> 31) & 0x00000001) != 0,
 	}
 }
@@ -553,8 +412,6 @@ type vmmMapVad struct {
 	count         uint32
 	vads          uintptr
 }
-
-
 
 //----------------------------------------------------------------------------//
 // Map PTE                                                                    //

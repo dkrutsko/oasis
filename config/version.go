@@ -69,7 +69,7 @@ type Version struct {
 func (v *Version) String() string {
 
 	return fmt.Sprintf(
-		"%s/%d.%d.%d.%d (%s, %s, %s)",
+		"%s/%d.%d.%d.%d (%s; %s; %s)",
 		v.Name,
 		v.Major,
 		v.Minor,

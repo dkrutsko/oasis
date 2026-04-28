@@ -1,6 +1,7 @@
 package game
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 
@@ -37,26 +38,26 @@ const (
 func (s ScannerResult) String() string {
 
 	switch s {
-		case ScannerResultSuccess:
-			return "Success"
-		case ScannerResultNoValue:
-			return "NoValue"
+	case ScannerResultSuccess:
+		return "Success"
+	case ScannerResultNoValue:
+		return "NoValue"
 
-		case ScannerResultProcessListError:
-			return "ProcessListError"
-		case ScannerResultProcessListEmpty:
-			return "ProcessListEmpty"
-		case ScannerResultProcessListMultiple:
-			return "ProcessListMultiple"
+	case ScannerResultProcessListError:
+		return "ProcessListError"
+	case ScannerResultProcessListEmpty:
+		return "ProcessListEmpty"
+	case ScannerResultProcessListMultiple:
+		return "ProcessListMultiple"
 
-		case ScannerResultModuleListError:
-			return "ModuleListError"
-		case ScannerResultModuleListEmpty:
-			return "ModuleListEmpty"
-		case ScannerResultModuleListNoEngine:
-			return "ModuleListNoEngine"
-		case ScannerResultModuleListNoClient:
-			return "ModuleListNoClient"
+	case ScannerResultModuleListError:
+		return "ModuleListError"
+	case ScannerResultModuleListEmpty:
+		return "ModuleListEmpty"
+	case ScannerResultModuleListNoEngine:
+		return "ModuleListNoEngine"
+	case ScannerResultModuleListNoClient:
+		return "ModuleListNoClient"
 	}
 
 	return strconv.FormatUint(uint64(s), 10)
@@ -164,7 +165,7 @@ func (g *Game) updateScanner(prev *ScannerState) *ScannerState {
 
 	{
 		// Attempt to list all the modules from the game
-		moduleList, err := result.Process.GetModules(nil)
+		moduleList, err := result.Process.GetModules(context.Background(), nil)
 		if err != nil {
 			result.Result = ScannerResultModuleListError
 			return result

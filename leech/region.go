@@ -6,26 +6,58 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Region represents a contiguous virtual memory region with
+// consistent protection attributes. Regions are retrieved
+// through `Memory.GetRegion` or `Memory.GetRegions`. All
+// properties are public and mutable.
 type Region struct {
+
+	// Valid is true if the region is backed by a VAD or PTE
+	// entry. False indicates an unmapped gap.
 	Valid bool
+
+	// Bound is true if the region's pages are committed and
+	// backed by physical memory or the pagefile.
 	Bound bool
 
+	// Start is the first address in the region.
 	Start uintptr
-	Stop  uintptr
-	Size  uintptr
 
-	Readable   bool
-	Writable   bool
+	// Stop is the address immediately after the last byte in
+	// the region.
+	Stop uintptr
+
+	// Size is the total size of the region in bytes.
+	Size uintptr
+
+	// Readable is true if the region has read access.
+	Readable bool
+
+	// Writable is true if the region has write access.
+	Writable bool
+
+	// Executable is true if the region has execute access.
 	Executable bool
-	Access     uint32
 
+	// Access is the raw Windows page protection attribute.
+	// Use the AccessPage* constants to test individual flags.
+	Access uint32
+
+	// Private is true if the region is private memory (not
+	// shared with other processes).
 	Private bool
+
+	// Guarded is true if the region has the `PageGuard` flag.
+	// Any attempt to access a guard page causes the system to
+	// raise an exception and turn off the guard page status.
 	Guarded bool
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) String() string {
+// String returns a formatted representation of the region
+// showing validity, bounds, addresses, permissions, and flags.
+func (r Region) String() string {
 
 	valid := 0
 	if r.Valid {
@@ -67,7 +99,7 @@ func (r *Region) String() string {
 	}
 
 	return fmt.Sprintf(
-		"%d %d  %08X  %08X  %08X  %s [%s][%s]",
+		"%d %d  %016X  %016X  %016X  %s [%s][%s]",
 		valid,
 		bound,
 		r.Start,
@@ -81,14 +113,18 @@ func (r *Region) String() string {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) Contains(address uintptr) bool {
+// Contains returns true if `address` is in the range
+// [Start, Stop) of this region.
+func (r Region) Contains(address uintptr) bool {
 
 	return r.Start <= address && address < r.Stop
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) Compare(value *Region) int {
+// Compare returns -1, 0, or 1 comparing regions by start
+// address.
+func (r Region) Compare(value *Region) int {
 
 	if r.Start < value.Start {
 		return -1
@@ -103,55 +139,72 @@ func (r *Region) Compare(value *Region) int {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) Lt(value *Region) bool {
+// Lt returns true if this region's start is less than the
+// other region's start.
+func (r Region) Lt(value *Region) bool {
 	return r.Start < value.Start
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) Gt(value *Region) bool {
+// Gt returns true if this region's start is greater than the
+// other region's start.
+func (r Region) Gt(value *Region) bool {
 	return r.Start > value.Start
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) Le(value *Region) bool {
+// Le returns true if this region's start is less than or equal
+// to the other region's start.
+func (r Region) Le(value *Region) bool {
 	return r.Start <= value.Start
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) Ge(value *Region) bool {
+// Ge returns true if this region's start is greater than or
+// equal to the other region's start.
+func (r Region) Ge(value *Region) bool {
 	return r.Start >= value.Start
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) LtAddress(address uintptr) bool {
+// LtAddress returns true if this region's start is less than
+// the given address.
+func (r Region) LtAddress(address uintptr) bool {
 	return r.Start < address
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) GtAddress(address uintptr) bool {
+// GtAddress returns true if this region's start is greater
+// than the given address.
+func (r Region) GtAddress(address uintptr) bool {
 	return r.Start > address
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) LeAddress(address uintptr) bool {
+// LeAddress returns true if this region's start is less than
+// or equal to the given address.
+func (r Region) LeAddress(address uintptr) bool {
 	return r.Start <= address
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) GeAddress(address uintptr) bool {
+// GeAddress returns true if this region's start is greater
+// than or equal to the given address.
+func (r Region) GeAddress(address uintptr) bool {
 	return r.Start >= address
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) Eq(value *Region) bool {
+// Eq returns true if both regions have identical fields.
+func (r Region) Eq(value *Region) bool {
 
 	return r.Valid == value.Valid &&
 		r.Bound == value.Bound &&
@@ -168,7 +221,8 @@ func (r *Region) Eq(value *Region) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Region) Ne(value *Region) bool {
+// Ne returns true if the regions differ in any field.
+func (r Region) Ne(value *Region) bool {
 
 	return r.Valid != value.Valid ||
 		r.Bound != value.Bound ||
