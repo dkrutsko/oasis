@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -115,6 +117,16 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
+	// Start pprof server if requested
+	if cfg.Pprof {
+		go func() {
+			logger.Info("pprof server listening on localhost:6060")
+			http.ListenAndServe("localhost:6060", nil)
+		}()
+	}
+
+	//----------------------------------------------------------------------------//
+
 	// Run in viewer mode if requested
 	if cfg.Viewer {
 		v := overlay.NewViewer()
@@ -136,7 +148,16 @@ func main() {
 	//----------------------------------------------------------------------------//
 
 	l := leech.New(&leech.Options{
-		Args: []string{"-device", "fpga"},
+		Args: []string{
+			"-device", "fpga",
+
+			// Disable all background refresh threads. We
+			// manage our own read cache and process scanner,
+			// so automatic TLB walks and process enumeration
+			// just cause DMA stalls. Refreshes are triggered
+			// manually when the scanner needs them.
+			"-norefresh",
+		},
 	})
 
 	err := l.Create()
@@ -146,6 +167,34 @@ func main() {
 			logger.Error("error", err),
 		)
 		os.Exit(int(exitCodeCreateLeech))
+	}
+
+	// Tune FPGA device and VMM settings for low-latency
+	// repeated reads of the same process.
+	for _, opt := range []struct {
+		name   string
+		option uint64
+		value  uint64
+	}{
+		// Disable paging - we don't need page fault resolution
+		{"paging_enabled", leech.ConfigPagingEnabled, 0},
+
+		// Disable read retries at the device level. We handle
+		// failures with ZEROPAD_ON_FAIL, so retries just add
+		// latency on transient errors.
+		{"fpga_retry_on_error", leech.ConfigFpgaRetryOnError, 0},
+
+		// Lower the FPGA read delay from the default 300-400us.
+		// This controls how long LeechCore waits between sending
+		// a TLP and reading the USB response buffer.
+		{"fpga_delay_read", leech.ConfigFpgaDelayRead, 150},
+	} {
+		if err := l.SetConfig(opt.option, opt.value); err != nil {
+			logger.Warn("failed to set leech config",
+				logger.String("name", opt.name),
+				logger.Error("error", err),
+			)
+		}
 	}
 
 	//----------------------------------------------------------------------------//
@@ -241,9 +290,11 @@ func setupSignals() (context.Context, context.CancelFunc) {
 		logger.Info("attempting a graceful shutdown")
 		cancel()
 
-		// Force exit if goroutines don't stop within 5 seconds
+		// Force exit if goroutines don't stop within 2 seconds.
+		// l.Close takes an exclusive lock that blocks if an
+		// abandoned DMA goroutine still holds a read lock.
 		go func() {
-			time.Sleep(5 * time.Second)
+			time.Sleep(2 * time.Second)
 			logger.Warn("graceful shutdown timed out")
 			os.Exit(int(exitCodeForceExit))
 		}()

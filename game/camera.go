@@ -81,8 +81,11 @@ func (g *Game) updateCamera(scanner *ScannerState) *CameraState {
 	// Grab client module base address
 	client := scanner.Client.GetBase()
 
-	// Create a memory object for reading
-	memory := scanner.Process.GetMemory()
+	// Use the persistent memory instance for camera reads
+	memory := g.cameraMemory
+	if memory == nil {
+		memory = scanner.Process.GetMemory()
+	}
 
 	//----------------------------------------------------------------------------//
 

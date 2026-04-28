@@ -33,6 +33,21 @@ const (
 	ConfigWinVersionBuild    uint64 = 0x2000010300000000 // R
 )
 
+// LeechCore FPGA device options. These are LC_OPT_FPGA_*
+// constants forwarded to LeechCore via `Leech.SetConfig`.
+const (
+	ConfigFpgaMaxSizeRx   uint64 = 0x0300000300000000 // RW
+	ConfigFpgaMaxSizeTx   uint64 = 0x0300000400000000 // RW
+	ConfigFpgaDelayRead   uint64 = 0x0300000800000000 // RW
+	ConfigFpgaDelayWrite  uint64 = 0x0300000700000000 // RW
+	ConfigFpgaRetryOnError uint64 = 0x0300000900000000 // RW
+	ConfigFpgaAlgoTiny    uint64 = 0x0300008400000000 // RW
+	ConfigFpgaDeviceId    uint64 = 0x0300008000000000 // RW
+	ConfigFpgaFpgaId      uint64 = 0x0300008100000000 // R
+	ConfigFpgaVersionMajor uint64 = 0x0300008200000000 // R
+	ConfigFpgaVersionMinor uint64 = 0x0300008300000000 // R
+)
+
 // VMMDLL refresh options. Writing any value to these options
 // triggers the corresponding cache refresh.
 const (

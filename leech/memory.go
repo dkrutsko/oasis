@@ -724,7 +724,7 @@ func (m *Memory) ClearCache() {
 	defer m.lock.Unlock()
 
 	m.cacheNext = 0
-	m.cachePages = make(map[uintptr]uintptr)
+	clear(m.cachePages)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -915,14 +915,14 @@ func (m *Memory) ReadData(address uintptr, length uintptr) ([]byte, error) {
 
 	m.stats.CachedReads++
 
-	// Copy the requested bytes from the cached block
+	// Return a subslice of the cache buffer. Callers must
+	// finish processing the data before the next ClearCache
+	// call, which reuses the same buffer for new reads.
 	offset := m.cachePages[aligned] + (address - aligned)
-	result := make([]byte, length)
-	copy(result, m.cache[offset:offset+length])
 
 	//----------------------------------------------------------------------------//
 
-	return result, nil
+	return m.cache[offset : offset+length], nil
 
 	//----------------------------------------------------------------------------//
 }
@@ -1000,82 +1000,6 @@ func (m *Memory) WriteData(address uintptr, data []byte) error {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (m *Memory) readPage(address uintptr) ([]byte, error) {
-
-	//----------------------------------------------------------------------------//
-
-	// Retrieve size of a page
-	pageSize := m.GetPageSize()
-
-	// Check if address aligned
-	if address%pageSize != 0 {
-		return nil, errors.New("address is unaligned")
-	}
-
-	// Lock for retrieval
-	m.leech.lock.RLock()
-	defer m.leech.lock.RUnlock()
-
-	// Make sure that handle and PID are valid
-	if m.leech.handle == 0 || m.proc.pid == 0 {
-		return nil, errors.New("process is not valid")
-	}
-
-	//----------------------------------------------------------------------------//
-
-	var bytesRead uint32
-	// Make buffer to hold the data
-	result := make([]byte, pageSize)
-
-	// Attempt to read the memory of the page
-	success, err := vmmCall(
-		vmmDll.memReadEx,
-		m.leech.handle,
-		uintptr(m.proc.pid),
-		address,
-		uintptr(unsafe.Pointer(&result[0])),
-		pageSize,
-		uintptr(unsafe.Pointer(&bytesRead)),
-		uintptr(0x1), // VMMDLL_FLAG_NOCACHE
-	)
-	if err != nil {
-		m.stats.ReadErrors++
-		return nil, errors.New(
-			"failed to read page",
-			errors.Uint32("pid", m.proc.pid),
-			errors.Uintptr("address", address),
-			errors.Error("error", err),
-		)
-	}
-	if success == 0 {
-		m.stats.ReadErrors++
-		return nil, errors.New(
-			"failed to read page",
-			errors.Uint32("pid", m.proc.pid),
-			errors.Uintptr("address", address),
-		)
-	}
-
-	if uintptr(bytesRead) != pageSize {
-		m.stats.ReadErrors++
-		return result, errors.New(
-			"not enough bytes have been read",
-			errors.Uint32("pid", m.proc.pid),
-			errors.Uintptr("address", address),
-			errors.Uint32("read", bytesRead),
-		)
-	}
-
-	//----------------------------------------------------------------------------//
-
-	m.stats.SystemReads++
-	return result, nil
-
-	//----------------------------------------------------------------------------//
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
 func (m *Memory) readDirect(address uintptr, length uintptr) ([]byte, error) {
 
 	//----------------------------------------------------------------------------//
@@ -1135,32 +1059,14 @@ func (m *Memory) readNative(address uintptr, length uintptr) ([]byte, error) {
 
 	//----------------------------------------------------------------------------//
 
-	pageSize := m.GetPageSize()
 	result := make([]byte, length)
-	var offset uintptr = 0
 
-	// Perform page-aligned reads
-	for offset < length {
-
-		// Calculate alignment to current start of page
-		aligned := (address + offset) &^ (pageSize - 1)
-
-		offsetInPage := (address + offset) - aligned
-
-		bytesToRead := pageSize - offsetInPage
-		// Calculate how much to read from this page
-		if rem := length - offset; bytesToRead > rem {
-			bytesToRead = rem
-		}
-
-		// Read directly into the result buffer
-		data, err := m.readPage(aligned)
-		if err != nil {
-			return nil, err
-		}
-
-		copy(result[offset:], data[offsetInPage:offsetInPage+bytesToRead])
-		offset += bytesToRead
+	// Single DMA call for the full read. VMMDLL handles
+	// cross-page reads internally, so there is no need to
+	// split into per-page requests.
+	err := m.readInto(address, result)
+	if err != nil {
+		return nil, err
 	}
 
 	//----------------------------------------------------------------------------//
@@ -1198,7 +1104,7 @@ func (m *Memory) readInto(address uintptr, buf []byte) error {
 		uintptr(unsafe.Pointer(&buf[0])),
 		uintptr(len(buf)),
 		uintptr(unsafe.Pointer(&bytesRead)),
-		uintptr(0x1), // VMMDLL_FLAG_NOCACHE
+		uintptr(0x1|0x2), // VMMDLL_FLAG_NOCACHE | VMMDLL_FLAG_ZEROPAD_ON_FAIL
 	)
 	if err != nil {
 		m.stats.ReadErrors++

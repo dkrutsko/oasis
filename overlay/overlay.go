@@ -80,7 +80,7 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 	var (
 		shm       *SharedMemory
-		dc        *gg.Context
+		contexts  [2]*gg.Context
 		width     int
 		height    int
 		lastCheck time.Time
@@ -114,9 +114,30 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 				continue
 			}
 
-			width = shm.Width()
-			height = shm.Height()
-			dc = gg.NewContext(width, height)
+			newW := shm.Width()
+			newH := shm.Height()
+
+			// Create a gg context for each buffer so we can
+			// draw directly into shared memory. This avoids
+			// the per-frame copy from a separate canvas.
+			if contexts[0] == nil || newW != width || newH != height {
+				width = newW
+				height = newH
+				rect := image.Rect(0, 0, width, height)
+				stride := width * 4
+
+				for i := uint32(0); i < 2; i++ {
+					img := &image.RGBA{
+						Pix:    shm.GetBuffer(i),
+						Stride: stride,
+						Rect:   rect,
+					}
+					contexts[i] = gg.NewContextForRGBA(img)
+					contexts[i].SetLineCapButt()
+					contexts[i].SetLineJoinBevel()
+				}
+			}
+
 			lastCheck = time.Now()
 
 			logger.Dbg("overlay attached to shared memory",
@@ -129,6 +150,11 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 		// Get a start time
 		start := time.Now()
+
+		// Pick the context that draws into the inactive
+		// buffer. Moonlight reads from the active buffer
+		// so there is no contention.
+		dc := contexts[shm.GetInactiveIndex()]
 
 		// Clear to fully transparent
 		dc.SetColor(color.NRGBA{0, 0, 0, 0})
@@ -146,9 +172,8 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 			o.renderEntities(dc, camera, action, width, height)
 		}
 
-		// Copy pixels to shared memory and flip
-		pix := dc.Image().(*image.RGBA).Pix
-		copy(shm.WriteBuffer(), pix)
+		// Flip the write index so Moonlight picks up the
+		// buffer we just rendered into. No copy needed.
 		shm.Flip()
 
 		//--------------------------------------------------------------------//
@@ -328,6 +353,7 @@ func (o *Overlay) renderEntities(
 			dc.Fill()
 		}
 	}
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////

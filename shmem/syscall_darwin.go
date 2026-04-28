@@ -50,3 +50,24 @@ func shmUnlink(name string) error {
 
 	return nil
 }
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (h *unixHandle) unlinked() bool {
+
+	// macOS kernel-managed shm segments do not report a
+	// meaningful Nlink via fstat. Instead, try to re-open
+	// the segment by name. If the open fails, the segment
+	// has been unlinked.
+	if h.name == "" {
+		return false
+	}
+
+	fd, err := shmOpen(h.name, unix.O_RDONLY, 0)
+	if err != nil {
+		return true
+	}
+
+	unix.Close(fd)
+	return false
+}

@@ -106,15 +106,33 @@ func (s *SharedMemory) Height() int {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetBuffer returns the pixel buffer at the given index (0 or 1).
+// The returned slice points directly into the mapped shared
+// memory region.
+func (s *SharedMemory) GetBuffer(index uint32) []byte {
+
+	data := s.seg.GetData()
+	offset := shmHeaderSize + int(index)*s.bufSize
+	return data[offset : offset+s.bufSize]
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetInactiveIndex returns the index of the buffer that is not
+// currently being read by the consumer. The producer should
+// render into this buffer before calling `Flip`.
+func (s *SharedMemory) GetInactiveIndex() uint32 {
+
+	return 1 - atomic.LoadUint32(s.writeIndexPtr())
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // WriteBuffer returns the inactive pixel buffer that the producer
 // should render into before calling `Flip`.
 func (s *SharedMemory) WriteBuffer() []byte {
 
-	data := s.seg.GetData()
-	idx := atomic.LoadUint32(s.writeIndexPtr())
-	inactive := 1 - idx
-	offset := shmHeaderSize + int(inactive)*s.bufSize
-	return data[offset : offset+s.bufSize]
+	return s.GetBuffer(s.GetInactiveIndex())
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -122,10 +140,7 @@ func (s *SharedMemory) WriteBuffer() []byte {
 // ReadBuffer returns the most recently completed pixel buffer.
 func (s *SharedMemory) ReadBuffer() []byte {
 
-	data := s.seg.GetData()
-	idx := atomic.LoadUint32(s.writeIndexPtr())
-	offset := shmHeaderSize + int(idx)*s.bufSize
-	return data[offset : offset+s.bufSize]
+	return s.GetBuffer(atomic.LoadUint32(s.writeIndexPtr()))
 }
 
 ////////////////////////////////////////////////////////////////////////////////
