@@ -443,4 +443,3 @@ func BoundsFromPointSize(point Point, size Size) Bounds {
 
 	return Bounds{point.X, point.Y, size.W, size.H}
 }
-

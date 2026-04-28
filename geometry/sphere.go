@@ -81,4 +81,3 @@ func (s Sphere) IntersectsSphere(other Sphere) bool {
 	combined := s.Radius + other.Radius
 	return s.Center.Sub(other.Center).LengthSq() <= combined*combined
 }
-

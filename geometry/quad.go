@@ -182,4 +182,3 @@ func QuadFromCenterNormal(
 		EdgeB:  edgeB,
 	}
 }
-

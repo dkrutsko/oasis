@@ -202,4 +202,3 @@ func BoxFromMinMax(min, max math.Vector3) Box {
 		Extents: max.Sub(min).MulScalar(0.5),
 	}
 }
-

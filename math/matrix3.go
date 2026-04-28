@@ -497,4 +497,3 @@ func (m Matrix3) Neg() Matrix3 {
 		-m.M31, -m.M32, -m.M33,
 	}
 }
-

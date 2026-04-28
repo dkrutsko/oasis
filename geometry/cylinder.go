@@ -202,4 +202,3 @@ func (c Cylinder) Distance(point math.Vector3) float64 {
 
 	return outside + inside
 }
-

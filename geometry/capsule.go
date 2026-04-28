@@ -142,4 +142,3 @@ func (c Capsule) Distance(point math.Vector3) float64 {
 
 	return point.Sub(closest).Length() - c.Radius
 }
-

@@ -442,4 +442,3 @@ func RayFromPoints(from, to math.Vector3) Ray {
 		Direction: to.Sub(from).Normalize(),
 	}
 }
-

@@ -1218,4 +1218,3 @@ func (m Matrix4) Neg() Matrix4 {
 		-m.M41, -m.M42, -m.M43, -m.M44,
 	}
 }
-

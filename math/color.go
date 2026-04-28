@@ -713,4 +713,3 @@ func (c Color) DivScalar(scalar float64) Color {
 
 	return Color{c.R / scalar, c.G / scalar, c.B / scalar, c.A / scalar}
 }
-

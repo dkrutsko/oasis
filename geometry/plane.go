@@ -183,4 +183,3 @@ func PlaneFromPointNormal(point, normal math.Vector3) Plane {
 		Distance: -n.Dot(point),
 	}
 }
-

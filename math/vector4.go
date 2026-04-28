@@ -667,4 +667,3 @@ func (v Vector4) Le(value Vector4) bool {
 func (v Vector4) Ge(value Vector4) bool {
 	return v.Compare(value) >= 0
 }
-

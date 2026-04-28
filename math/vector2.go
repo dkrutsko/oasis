@@ -555,4 +555,3 @@ func (v Vector2) Le(value Vector2) bool {
 func (v Vector2) Ge(value Vector2) bool {
 	return v.Compare(value) >= 0
 }
-

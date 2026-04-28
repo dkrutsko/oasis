@@ -578,4 +578,3 @@ func (q Quaternion) Neg() Quaternion {
 		-q.W,
 	}
 }
-

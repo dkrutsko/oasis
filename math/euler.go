@@ -393,4 +393,3 @@ func EulerFromQuaternion(q Quaternion, order RotationOrderType) Euler {
 
 	return EulerFromRotationMatrix(q.ToMatrix4(), order)
 }
-

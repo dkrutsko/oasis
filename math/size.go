@@ -90,4 +90,3 @@ func (s Size) Sub(value Size) Size {
 
 	return Size{s.W - value.W, s.H - value.H}
 }
-
