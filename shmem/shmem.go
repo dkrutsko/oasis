@@ -115,6 +115,7 @@ type handle interface {
 	size() int
 	flush() error
 	close() error
+	unlinked() bool
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -260,6 +261,24 @@ func (s *Segment) GetTechnique() TechniqueType {
 	defer s.mu.RUnlock()
 
 	return s.technique
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// IsUnlinked returns true if the segment's backing name has been
+// removed from the filesystem while the mapping is still open.
+// On POSIX this checks that the file descriptor's link count has
+// dropped to zero (e.g. after shm_unlink by another process).
+func (s *Segment) IsUnlinked() bool {
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.h == nil {
+		return false
+	}
+
+	return s.h.unlinked()
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -41,55 +41,11 @@ type SharedMemory struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// ShmCreate opens or creates a shared memory segment for writing and
-// initializes the header with the given dimensions.
-func ShmCreate(width, height int) (*SharedMemory, error) {
-
-	//----------------------------------------------------------------------------//
-
-	bufSize := width * height * 4
-	totalSize := shmHeaderSize + bufSize*2
-
-	seg := shmem.New(&shmem.Options{
-		Name:      shmName,
-		Size:      totalSize,
-		Technique: shmem.TechniqueSharedMemory,
-	})
-
-	err := seg.Create()
-	if err != nil {
-		return nil, errors.New(
-			"failed to create shared memory",
-			errors.Error("error", err),
-		)
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Initialize header fields
-	data := seg.GetData()
-	binary.LittleEndian.PutUint32(data[0:4], 0)
-	binary.LittleEndian.PutUint32(data[4:8], uint32(width))
-	binary.LittleEndian.PutUint32(data[8:12], uint32(height))
-	binary.LittleEndian.PutUint32(data[12:16], 0)
-	binary.LittleEndian.PutUint32(data[16:20], 0)
-	binary.LittleEndian.PutUint32(data[20:24], 0)
-
-	return &SharedMemory{
-		seg:     seg,
-		width:   width,
-		height:  height,
-		bufSize: bufSize,
-	}, nil
-
-	//----------------------------------------------------------------------------//
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// ShmOpen opens an existing shared memory segment for reading. The
-// dimensions are read from the header written by the producer.
-func ShmOpen() (*SharedMemory, error) {
+// ShmOpen opens an existing shared memory segment created by the
+// stream host (e.g. Moonlight). When readOnly is true the mapping
+// is read-only. The dimensions are read from the header written
+// by the segment owner.
+func ShmOpen(readOnly bool) (*SharedMemory, error) {
 
 	//----------------------------------------------------------------------------//
 
@@ -98,7 +54,7 @@ func ShmOpen() (*SharedMemory, error) {
 		Technique: shmem.TechniqueSharedMemory,
 	})
 
-	err := seg.Open(true)
+	err := seg.Open(readOnly)
 	if err != nil {
 		return nil, errors.New(
 			"failed to open shared memory",
@@ -108,9 +64,19 @@ func ShmOpen() (*SharedMemory, error) {
 
 	//----------------------------------------------------------------------------//
 
+	// Read dimensions from the header
 	data := seg.GetData()
 	width := int(binary.LittleEndian.Uint32(data[4:8]))
 	height := int(binary.LittleEndian.Uint32(data[8:12]))
+
+	if width <= 0 || height <= 0 {
+		seg.Close()
+		return nil, errors.New(
+			"shared memory has invalid dimensions",
+			errors.Int("width", width),
+			errors.Int("height", height),
+		)
+	}
 
 	return &SharedMemory{
 		seg:     seg,
@@ -171,6 +137,20 @@ func (s *SharedMemory) Flip() {
 	idx := atomic.LoadUint32(s.writeIndexPtr())
 	atomic.StoreUint32(s.writeIndexPtr(), 1-idx)
 	atomic.StoreUint32(s.dirtyPtr(), 1)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// IsUnlinked returns true if the segment's backing name has been
+// removed while the mapping is still open. This indicates the
+// stream host (e.g. Moonlight) ended the session.
+func (s *SharedMemory) IsUnlinked() bool {
+
+	if s.seg == nil {
+		return false
+	}
+
+	return s.seg.IsUnlinked()
 }
 
 ////////////////////////////////////////////////////////////////////////////////

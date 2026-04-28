@@ -70,7 +70,7 @@ func (v *Viewer) Update() error {
 
 	// Try to connect if not attached
 	if v.shm == nil {
-		shm, err := ShmOpen()
+		shm, err := ShmOpen(true)
 		if err != nil {
 			return nil
 		}

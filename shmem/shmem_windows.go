@@ -58,6 +58,16 @@ func (h *windowsHandle) flush() error {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (h *windowsHandle) unlinked() bool {
+
+	// Windows named objects are reference-counted and don't have
+	// POSIX unlink semantics. The mapping stays valid as long as
+	// at least one handle is open.
+	return false
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (h *windowsHandle) close() error {
 
 	if h.addr != 0 {

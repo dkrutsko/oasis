@@ -55,6 +55,23 @@ func (h *unixHandle) flush() error {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (h *unixHandle) unlinked() bool {
+
+	if h.fd <= 0 {
+		return false
+	}
+
+	var stat unix.Stat_t
+	err := unix.Fstat(h.fd, &stat)
+	if err != nil {
+		return false
+	}
+
+	return stat.Nlink == 0
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (h *unixHandle) close() error {
 
 	if h.buf != nil {

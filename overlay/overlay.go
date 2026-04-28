@@ -21,9 +21,16 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
+	// Default dimensions used by the viewer when the shared memory
+	// segment is not yet available.
 	overlayWidth  = 1920
 	overlayHeight = 1080
-	overlayFps    = 60
+
+	overlayFps = 60
+
+	// How often to check if the shared memory segment still
+	// exists. Moonlight unlinks it when the stream ends.
+	shmCheckInterval = 2 * time.Second
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -31,22 +38,17 @@ const (
 // Overlay renders game entity positions into a shared memory
 // region for consumption by Moonlight or the debug viewer.
 type Overlay struct {
-	shm  *SharedMemory
 	game *game.Game
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// NewOverlay creates a shared memory segment and returns an
-// overlay ready to start its render loop.
-func NewOverlay(g *game.Game) (*Overlay, error) {
+// NewOverlay creates an overlay ready to start its render loop.
+// The shared memory connection is established lazily during the
+// render loop once Moonlight creates the segment.
+func NewOverlay(g *game.Game) *Overlay {
 
-	shm, err := ShmCreate(overlayWidth, overlayHeight)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Overlay{shm: shm, game: g}, nil
+	return &Overlay{game: g}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -65,13 +67,9 @@ func (o *Overlay) Start(group *errgroup.Group, ctx context.Context) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Close releases the shared memory segment.
+// Close is a no-op. The shared memory segment is owned by
+// Moonlight and cleaned up inside the render loop.
 func (o *Overlay) Close() error {
-
-	if o.shm != nil {
-		o.shm.Close()
-		o.shm = nil
-	}
 
 	return nil
 }
@@ -80,13 +78,54 @@ func (o *Overlay) Close() error {
 
 func (o *Overlay) renderLoop(ctx context.Context) {
 
-	dc := gg.NewContext(overlayWidth, overlayHeight)
+	var (
+		shm       *SharedMemory
+		dc        *gg.Context
+		width     int
+		height    int
+		lastCheck time.Time
+	)
+
+	defer func() {
+		if shm != nil {
+			shm.Close()
+		}
+	}()
 
 	for {
 		// Check for shutdown
 		if ctx.Err() != nil {
 			return
 		}
+
+		//--------------------------------------------------------------------//
+
+		// Try to attach to shared memory if not connected.
+		// Moonlight creates the segment when a stream starts.
+		if shm == nil {
+			var err error
+			shm, err = ShmOpen(false)
+			if err != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+				}
+				continue
+			}
+
+			width = shm.Width()
+			height = shm.Height()
+			dc = gg.NewContext(width, height)
+			lastCheck = time.Now()
+
+			logger.Dbg("overlay attached to shared memory",
+				logger.Int("width", width),
+				logger.Int("height", height),
+			)
+		}
+
+		//--------------------------------------------------------------------//
 
 		// Get a start time
 		start := time.Now()
@@ -104,19 +143,41 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 			action.Result == game.ActionResultSuccess &&
 			action.Player != nil {
 
-			o.renderEntities(dc, camera, action)
+			o.renderEntities(dc, camera, action, width, height)
 		}
 
 		// Copy pixels to shared memory and flip
 		pix := dc.Image().(*image.RGBA).Pix
-		copy(o.shm.WriteBuffer(), pix)
-		o.shm.Flip()
+		copy(shm.WriteBuffer(), pix)
+		shm.Flip()
+
+		//--------------------------------------------------------------------//
+
+		// Periodically check if the segment has been unlinked.
+		// Moonlight calls shm_unlink when the stream ends. The
+		// existing mmap stays valid but the data goes stale.
+		if time.Since(lastCheck) > shmCheckInterval {
+			lastCheck = time.Now()
+
+			if shm.IsUnlinked() {
+				logger.Dbg("overlay segment unlinked, waiting for reconnect")
+				shm.Close()
+				shm = nil
+				continue
+			}
+		}
+
+		//--------------------------------------------------------------------//
 
 		// Rate limit to target FPS
 		elapsed := time.Since(start)
 		rem := (time.Second / overlayFps) - elapsed
 		if rem > 0 {
-			time.Sleep(rem)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(rem):
+			}
 		}
 	}
 }
@@ -127,6 +188,7 @@ func (o *Overlay) renderEntities(
 	dc *gg.Context,
 	camera *game.CameraState,
 	action *game.ActionState,
+	width, height int,
 ) {
 
 	// CS2 view matrix is row-major (M * v convention) but
@@ -134,6 +196,7 @@ func (o *Overlay) renderEntities(
 	// to align the two.
 	mvp := camera.View.Transpose()
 	localTeam := action.Player.Team
+	viewport := math.Size{W: width, H: height}
 
 	for i := range action.Entities {
 		entity := &action.Entities[i]
@@ -149,7 +212,6 @@ func (o *Overlay) renderEntities(
 		}
 
 		// Project head and feet to screen for sizing
-		viewport := math.Size{W: overlayWidth, H: overlayHeight}
 		headScreen, headVisible := math.ProjectToScreenMvp(
 			entity.Head, viewport, mvp,
 		)
@@ -213,7 +275,7 @@ func (o *Overlay) renderEntities(
 			}
 
 			// View direction indicator
-			o.renderViewDir(dc, entity, sx, sy, mvp)
+			o.renderViewDir(dc, entity, sx, sy, mvp, viewport)
 
 		} else {
 			// Teammate indicator
@@ -231,6 +293,7 @@ func (o *Overlay) renderViewDir(
 	entity *game.ActionEntity,
 	sx, sy float64,
 	mvp math.Matrix4,
+	viewport math.Size,
 ) {
 
 	// Convert eye angles to a forward direction vector
@@ -249,7 +312,7 @@ func (o *Overlay) renderViewDir(
 	}
 
 	lookScreen, lookVisible := math.ProjectToScreenMvp(
-		lookPoint, math.Size{W: overlayWidth, H: overlayHeight}, mvp,
+		lookPoint, viewport, mvp,
 	)
 
 	if !lookVisible {
