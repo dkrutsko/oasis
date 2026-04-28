@@ -27,6 +27,7 @@ type Game struct {
 	options *Options
 
 	scanner *ScannerState
+	memory  *leech.Memory
 	action  *ActionState
 	camera  *CameraState
 
@@ -121,6 +122,12 @@ func (g *Game) Create() error {
 				if next.Result == ScannerResultSuccess {
 
 					attached = true
+
+					// Create cached memory for entity reads
+					mem := next.Process.GetMemory()
+					mem.CreateCache(16384, 4096, 5242880, 1048576, 10485760)
+					g.memory = mem
+
 					logger.Info(
 						"attached",
 						logger.Uint32("pid", next.Process.GetPid()),
@@ -131,6 +138,13 @@ func (g *Game) Create() error {
 				} else if attached {
 
 					attached = false
+
+					// Clean up cached memory
+					if g.memory != nil {
+						g.memory.DeleteCache()
+						g.memory = nil
+					}
+
 					logger.Info("detached")
 				}
 

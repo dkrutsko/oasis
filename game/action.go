@@ -111,8 +111,14 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 	// Grab the client module base address
 	client := scanner.Client.GetBase()
 
-	// Create a memory object for reading
-	memory := scanner.Process.GetMemory()
+	// Use the cached memory for entity reads. Clear at the
+	// start of each frame so all reads within the frame are
+	// fresh but nearby reads coalesce into single DMA calls.
+	memory := g.memory
+	if memory == nil {
+		memory = scanner.Process.GetMemory()
+	}
+	memory.ClearCache()
 
 	//----------------------------------------------------------------------------//
 
