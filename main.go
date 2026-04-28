@@ -16,6 +16,7 @@ import (
 
 	"github.com/dkrutsko/oasis/config"
 	"github.com/dkrutsko/oasis/game"
+	"github.com/dkrutsko/oasis/input"
 	"github.com/dkrutsko/oasis/leech"
 	"github.com/dkrutsko/oasis/logger"
 	"github.com/dkrutsko/oasis/overlay"
@@ -231,6 +232,13 @@ func main() {
 	o := overlay.NewOverlay(g)
 	defer o.Close()
 	o.Start(group, gctx)
+
+	//----------------------------------------------------------------------------//
+
+	// Start the input synthesizer
+	inp := input.NewInput()
+	defer inp.Close()
+	inp.Start(group, gctx)
 
 	//----------------------------------------------------------------------------//
 
