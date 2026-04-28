@@ -38,7 +38,8 @@ const (
 // Overlay renders game entity positions into a shared memory
 // region for consumption by Moonlight or the debug viewer.
 type Overlay struct {
-	game *game.Game
+	game    *game.Game
+	trigger *game.Trigger
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -46,9 +47,9 @@ type Overlay struct {
 // NewOverlay creates an overlay ready to start its render loop.
 // The shared memory connection is established lazily during the
 // render loop once Moonlight creates the segment.
-func NewOverlay(g *game.Game) *Overlay {
+func NewOverlay(g *game.Game, trigger *game.Trigger) *Overlay {
 
-	return &Overlay{game: g}
+	return &Overlay{game: g, trigger: trigger}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -78,6 +79,8 @@ func (o *Overlay) Close() error {
 
 func (o *Overlay) renderLoop(ctx context.Context) {
 
+	hb := o.game.GetHealthMonitor().Register("overlay")
+
 	var (
 		shm       *SharedMemory
 		contexts  [2]*gg.Context
@@ -88,10 +91,10 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 	defer func() {
 		if shm != nil {
-			// Clear the inactive buffer and flip so Moonlight
-			// picks up a blank frame. We only clear the
-			// inactive side to avoid tearing on the buffer
-			// Moonlight is currently reading.
+			// Clear both buffers so Moonlight picks up a blank
+			// frame regardless of which side it reads next.
+			clear(shm.WriteBuffer())
+			shm.Flip()
 			clear(shm.WriteBuffer())
 			shm.Flip()
 			shm.Close()
@@ -99,6 +102,8 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 	}()
 
 	for {
+		hb.Beat()
+
 		// Check for shutdown
 		if ctx.Err() != nil {
 			return
@@ -177,6 +182,33 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 			o.renderEntities(dc, camera, action, width, height)
 		}
+
+		// Crosshair at screen center. Red when the triggerbot
+		// is enabled, green otherwise. Draw outline first,
+		// then fill on top.
+		cx := float64(width) / 2
+		cy := float64(height) / 2
+
+		// Black outline
+		dc.SetColor(color.NRGBA{0, 0, 0, 255})
+		dc.SetLineWidth(4)
+		dc.DrawLine(cx-20, cy, cx+20, cy)
+		dc.Stroke()
+		dc.DrawLine(cx, cy-20, cx, cy+20)
+		dc.Stroke()
+
+		// Inner fill
+		if o.trigger != nil && o.trigger.Enabled.Load() {
+			dc.SetColor(color.NRGBA{255, 0, 0, 255})
+		} else {
+			dc.SetColor(color.NRGBA{0, 255, 0, 255})
+		}
+
+		dc.SetLineWidth(2)
+		dc.DrawLine(cx-20, cy, cx+20, cy)
+		dc.Stroke()
+		dc.DrawLine(cx, cy-20, cx, cy+20)
+		dc.Stroke()
 
 		// Flip the write index so Moonlight picks up the
 		// buffer we just rendered into. No copy needed.
@@ -280,83 +312,24 @@ func (o *Overlay) renderEntities(
 			continue
 		}
 
-		// Project head and feet to screen for sizing
-		headScreen, headVisible := math.ProjectToScreenMvp(
-			entity.Head, viewport, mvp,
-		)
-		feetScreen, feetVisible := math.ProjectToScreenMvp(
-			entity.Origin, viewport, mvp,
-		)
-
-		if !headVisible {
-			continue
-		}
-
-		// Offset from game viewport to overlay canvas
-		headScreen.X += vpX
-		headScreen.Y += vpY
-		feetScreen.X += vpX
-		feetScreen.Y += vpY
-
-		sx := headScreen.X
-		sy := headScreen.Y
-
 		// Determine if enemy or teammate
 		isEnemy := entity.Team != localTeam
 
 		if isEnemy {
-			drewBox := false
-
-			// Use head-to-feet distance for scaling when both visible
-			if feetVisible {
-				boxH := feetScreen.Y - headScreen.Y
-				if boxH > 4 {
-					boxW := boxH * 0.6
-
-					// Bounding box
-					dc.SetColor(color.NRGBA{255, 50, 50, 220})
-					dc.SetLineWidth(1.5)
-					dc.DrawRectangle(
-						sx-boxW/2, sy,
-						boxW, boxH,
-					)
-					dc.Stroke()
-
-					// Health bar on left side
-					barX := sx - boxW/2 - 4
-					pct := float64(entity.Health) / 100.0
-
-					// Background
-					dc.SetColor(color.NRGBA{0, 0, 0, 160})
-					dc.DrawRectangle(barX, sy, 2, boxH)
-					dc.Fill()
-
-					// Fill from bottom up
-					r := uint8(255 * (1 - pct))
-					g := uint8(255 * pct)
-					dc.SetColor(color.NRGBA{r, g, 0, 220})
-					dc.DrawRectangle(barX, sy+boxH*(1-pct), 2, boxH*pct)
-					dc.Fill()
-
-					drewBox = true
-				}
-			}
-
-			if !drewBox {
-				// Fallback for distant enemies: simple dot
-				dc.SetColor(color.NRGBA{255, 50, 50, 220})
-				dc.DrawCircle(sx, sy, 4)
-				dc.Fill()
-			}
-
-			// View direction indicator
-			o.renderViewDir(dc, entity, sx, sy, mvp, viewport, vpX, vpY)
-
+			o.renderSkeleton(dc, entity, mvp, viewport, vpX, vpY)
 		} else {
 			// Teammate indicator
-			dc.SetColor(color.NRGBA{50, 200, 50, 150})
-			dc.DrawCircle(sx, sy, 3)
-			dc.Fill()
+			headScreen, headVisible := math.ProjectToScreenMvp(
+				entity.Head, viewport, mvp,
+			)
+
+			if headVisible {
+				headScreen.X += vpX
+				headScreen.Y += vpY
+				dc.SetColor(color.NRGBA{50, 200, 50, 150})
+				dc.DrawCircle(headScreen.X, headScreen.Y, 3)
+				dc.Fill()
+			}
 		}
 	}
 
@@ -364,44 +337,97 @@ func (o *Overlay) renderEntities(
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (o *Overlay) renderViewDir(
+func (o *Overlay) renderSkeleton(
 	dc *gg.Context,
 	entity *game.ActionEntity,
-	sx, sy float64,
 	mvp math.Matrix4,
 	viewport math.Size,
 	vpX, vpY float64,
 ) {
 
-	// Convert eye angles to a forward direction vector
-	yawRad := entity.Angles.Y * sysMath.Pi / 180.0
-	pitchRad := entity.Angles.X * sysMath.Pi / 180.0
+	//----------------------------------------------------------------------------//
 
-	dirX := sysMath.Cos(pitchRad) * sysMath.Cos(yawRad)
-	dirY := sysMath.Cos(pitchRad) * sysMath.Sin(yawRad)
-	dirZ := -sysMath.Sin(pitchRad)
+	// Genesis-style rendering: a vertical spine line from feet
+	// to head height, plus a horizontal shoulder bar perpendicular
+	// to the entity's facing direction.
 
-	// Project a point ahead in the look direction
-	lookPoint := math.Vector3{
-		X: entity.Head.X + dirX*150,
-		Y: entity.Head.Y + dirY*150,
-		Z: entity.Head.Z + dirZ*150,
+	headPos := entity.Head
+	if !headPos.IsZero() && entity.Bones.Valid {
+		headPos = entity.Bones.Pos[game.BoneHead]
 	}
 
-	lookScreen, lookVisible := math.ProjectToScreenMvp(
-		lookPoint, viewport, mvp,
-	)
+	yawRad := entity.Angles.Y * sysMath.Pi / 180.0
+	sin90 := sysMath.Sin(yawRad + sysMath.Pi/2)
+	cos90 := sysMath.Cos(yawRad + sysMath.Pi/2)
 
-	if !lookVisible {
+	// Vertical spine: from (head.x, head.y, origin.z) to
+	// (head.x, head.y, head.z)
+	feetPoint := math.Vector3{X: headPos.X, Y: headPos.Y, Z: entity.Origin.Z}
+	topPoint := headPos
+
+	// Shoulder bar: 40 units wide, perpendicular to facing,
+	// at feet height
+	shoulderL := math.Vector3{
+		X: headPos.X - 20*cos90,
+		Y: headPos.Y - 20*sin90,
+		Z: entity.Origin.Z,
+	}
+	shoulderR := math.Vector3{
+		X: headPos.X + 20*cos90,
+		Y: headPos.Y + 20*sin90,
+		Z: entity.Origin.Z,
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Project all four points
+	pFeet, feetVis := math.ProjectToScreenMvp(feetPoint, viewport, mvp)
+	pHead, headVis := math.ProjectToScreenMvp(topPoint, viewport, mvp)
+	pShL, shLVis := math.ProjectToScreenMvp(shoulderL, viewport, mvp)
+	pShR, shRVis := math.ProjectToScreenMvp(shoulderR, viewport, mvp)
+
+	if !headVis && !feetVis {
 		return
 	}
 
-	// Offset from game viewport to overlay canvas
-	lookScreen.X += vpX
-	lookScreen.Y += vpY
+	// Offset to overlay canvas
+	pFeet.X += vpX
+	pFeet.Y += vpY
+	pHead.X += vpX
+	pHead.Y += vpY
+	pShL.X += vpX
+	pShL.Y += vpY
+	pShR.X += vpX
+	pShR.Y += vpY
 
-	dc.SetColor(color.NRGBA{255, 100, 100, 140})
-	dc.SetLineWidth(1.0)
-	dc.DrawLine(sx, sy, lookScreen.X, lookScreen.Y)
-	dc.Stroke()
+	//----------------------------------------------------------------------------//
+
+	// Pick color based on health
+	var c color.NRGBA
+	if entity.Health > 70 {
+		c = color.NRGBA{50, 220, 50, 255}
+	} else if entity.Health > 30 {
+		c = color.NRGBA{255, 160, 30, 255}
+	} else {
+		c = color.NRGBA{255, 50, 50, 255}
+	}
+
+	dc.SetColor(c)
+	dc.SetLineWidth(6)
+
+	//----------------------------------------------------------------------------//
+
+	// Vertical spine line
+	if feetVis && headVis {
+		dc.DrawLine(pFeet.X, pFeet.Y, pHead.X, pHead.Y)
+		dc.Stroke()
+	}
+
+	// Shoulder bar (dashed)
+	if shLVis && shRVis {
+		dc.DrawLine(pShL.X, pShL.Y, pShR.X, pShR.Y)
+		dc.Stroke()
+	}
+
+	//----------------------------------------------------------------------------//
 }

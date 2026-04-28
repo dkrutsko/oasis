@@ -33,6 +33,8 @@ type Game struct {
 	scatter      *leech.Scatter
 	action       *ActionState
 	camera       *CameraState
+	trigger      *Trigger
+	health       *HealthMonitor
 
 	// Number of DMA goroutines currently abandoned and
 	// stuck in a cgo call. Shared across updaters.
@@ -54,6 +56,8 @@ func New(opts *Options) *Game {
 		scanner: NewScannerState(),
 		action:  NewActionState(),
 		camera:  NewCameraState(),
+		trigger: NewTrigger(),
+		health:  NewHealthMonitor(),
 
 		offsets:  make(map[string][]byte),
 		strCache: make(map[string]string),
@@ -79,6 +83,18 @@ func (g *Game) GetActionState() *ActionState {
 
 func (g *Game) GetCameraState() *CameraState {
 	return g.camera
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (g *Game) GetTrigger() *Trigger {
+	return g.trigger
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (g *Game) GetHealthMonitor() *HealthMonitor {
+	return g.health
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -111,10 +127,13 @@ func (g *Game) Create() error {
 
 	g.options.Group.Go(func() error {
 		logger.Dbg("starting game scanner")
+		hb := g.health.Register("scanner")
 
 		logger.Info("looking for the game")
 
 		for {
+			hb.Beat()
+
 			// Trigger a process list refresh before scanning.
 			// With -norefresh, MemProcFS does not enumerate
 			// processes automatically.
@@ -202,6 +221,7 @@ func (g *Game) Create() error {
 
 	g.options.Group.Go(func() error {
 		logger.Dbg("starting action updater")
+		hb := g.health.Register("action")
 
 		var actionFlight atomic.Bool
 
@@ -211,6 +231,8 @@ func (g *Game) Create() error {
 		lastLog := time.Now()
 
 		for {
+			hb.Beat()
+
 			if g.options.Gctx.Err() != nil {
 				logger.Dbg("stopping action updater")
 				return nil
@@ -271,6 +293,12 @@ func (g *Game) Create() error {
 					g.abandoned.Add(-1)
 				}()
 
+				// Replace the memory handle so the next frame
+				// gets a fresh instance. Skip creating a new
+				// scatter handle here because GetScatter makes
+				// a VMM call that could also get stuck. Fall
+				// back to sequential reads until the next
+				// successful scanner cycle recreates it.
 				if s := g.scanner; s != nil &&
 					s.Result == ScannerResultSuccess {
 
@@ -279,11 +307,7 @@ func (g *Game) Create() error {
 						16384, 4096, 5242880, 1048576, 10485760,
 					)
 					g.memory = mem
-
-					scatter, sErr := s.Process.GetScatter(leech.ScatterFlagDefault)
-					if sErr == nil {
-						g.scatter = scatter
-					}
+					g.scatter = nil
 				}
 			}
 
@@ -317,6 +341,7 @@ func (g *Game) Create() error {
 
 	g.options.Group.Go(func() error {
 		logger.Dbg("starting camera updater")
+		hb := g.health.Register("camera")
 
 		var cameraFlight atomic.Bool
 
@@ -325,6 +350,8 @@ func (g *Game) Create() error {
 		lastLog := time.Now()
 
 		for {
+			hb.Beat()
+
 			if g.options.Gctx.Err() != nil {
 				logger.Dbg("stopping camera updater")
 				return nil

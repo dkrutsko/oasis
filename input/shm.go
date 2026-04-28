@@ -127,6 +127,17 @@ func (q *InputQueue) Enqueue(entry InputEntry) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetPending returns the number of entries in the ring buffer
+// that have been written but not yet consumed by Moonlight.
+func (q *InputQueue) GetPending() uint32 {
+
+	writePos := atomic.LoadUint32(q.writePosPtr())
+	readPos := atomic.LoadUint32(q.readPosPtr())
+	return writePos - readPos
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // IsUnlinked returns true if the segment's backing name has
 // been removed. This indicates the stream host ended the
 // session.

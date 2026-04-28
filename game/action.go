@@ -62,6 +62,8 @@ type ActionEntity struct {
 	Neck math.Vector3 // Entity neck position
 	Head math.Vector3 // Entity head position
 
+	Bones BonePositions // Full skeleton bone data
+
 	Health int32 // Health of entity
 	//	Flags  Flags_t // Some entity flags
 	Scoped bool  // If entity scoped
@@ -169,6 +171,18 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		return result
 	}
 
+	offGameSceneNode, ok := g.GetOffsetsInt("client_dll", "client.dll", "classes", "C_BaseEntity", "fields", "m_pGameSceneNode")
+	if !ok {
+		result.Result = ActionResultNoOffset
+		return result
+	}
+
+	offModelState, ok := g.GetOffsetsInt("client_dll", "client.dll", "classes", "CSkeletonInstance", "fields", "m_modelState")
+	if !ok {
+		result.Result = ActionResultNoOffset
+		return result
+	}
+
 	//----------------------------------------------------------------------------//
 
 	// Check if the player is currently in-game
@@ -218,10 +232,16 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 	scatter := g.scatter
 	pid := scanner.Process.GetPid()
 
+	// Internal CModelState offset to the bone array pointer.
+	// This is not exposed in schema dumps and comes from SDK
+	// reverse engineering.
+	const offBoneArray uintptr = 0x80
+
 	if scatter == nil {
 		return g.updateActionSequential(
 			result, memory, localPawnAddr, entListBase, listEntry,
 			offPawnHandle, offHealth, offTeamNum, offOrigin, offEyeAngles,
+			offGameSceneNode, offModelState, offBoneArray,
 		)
 	}
 
@@ -330,7 +350,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 
 	//----------------------------------------------------------------------------//
 
-	// Pass 5: Read entity data for all valid pawns
+	// Pass 5: Read entity data and scene node pointers for all valid pawns
 	scatter.Clear(pid, leech.ScatterFlagDefault)
 
 	for e := 0; e < 64; e++ {
@@ -341,6 +361,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		scatter.Prepare(pawns[e]+offTeamNum, 4)
 		scatter.Prepare(pawns[e]+offOrigin, 12)
 		scatter.Prepare(pawns[e]+offEyeAngles, 8)
+		scatter.Prepare(pawns[e]+offGameSceneNode, 8)
 	}
 
 	if err := scatter.ExecuteRead(); err != nil {
@@ -353,6 +374,11 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 	// Decode results and build entity list
 	entities := make([]ActionEntity, 0, 64)
 	playerIdx := -1
+
+	// Track scene node pointers and entity-to-slot mapping
+	// for the bone reading passes that follow.
+	var sceneNodes [64]uintptr
+	entitySlots := make([]int, 0, 64)
 
 	for e := 0; e < 64; e++ {
 		if pawns[e] == 0 {
@@ -379,6 +405,8 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		anglesData, _ := scatter.Read(pawns[e]+offEyeAngles, 8)
 		angles, _ := math.Vector2FromBytes32(anglesData)
 
+		sceneNodes[e], _ = scatter.ReadPtr(pawns[e] + offGameSceneNode)
+
 		entity := ActionEntity{
 			Valid:  true,
 			Index:  e,
@@ -390,9 +418,72 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		}
 
 		entities = append(entities, entity)
+		entitySlots = append(entitySlots, e)
 
 		if pawns[e] == localPawnAddr {
 			playerIdx = len(entities) - 1
+		}
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Pass 6: Read bone array pointers from scene nodes
+	scatter.Clear(pid, leech.ScatterFlagDefault)
+
+	for _, slot := range entitySlots {
+		if sceneNodes[slot] != 0 {
+			scatter.Prepare(sceneNodes[slot]+offModelState+offBoneArray, 8)
+		}
+	}
+
+	if err := scatter.ExecuteRead(); err != nil {
+		result.Result = ActionResultReadFail
+		return result
+	}
+
+	var boneArrays [64]uintptr
+	for _, slot := range entitySlots {
+		if sceneNodes[slot] != 0 {
+			boneArrays[slot], _ = scatter.ReadPtr(sceneNodes[slot] + offModelState + offBoneArray)
+		}
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Pass 7: Read bone positions for all entities with valid
+	// bone arrays. We read the full contiguous block up to
+	// BoneCount so every indexed bone is covered in one read.
+	scatter.Clear(pid, leech.ScatterFlagDefault)
+
+	readSize := uint32(BoneCount * BoneDataSize)
+	for _, slot := range entitySlots {
+		if boneArrays[slot] != 0 {
+			scatter.Prepare(boneArrays[slot], readSize)
+		}
+	}
+
+	if err := scatter.ExecuteRead(); err != nil {
+		result.Result = ActionResultReadFail
+		return result
+	}
+
+	for i, slot := range entitySlots {
+		if boneArrays[slot] == 0 {
+			continue
+		}
+
+		boneData, err := scatter.Read(boneArrays[slot], readSize)
+		if err != nil {
+			continue
+		}
+
+		bones := decodeBonePositions(boneData)
+		entities[i].Bones = bones
+
+		if bones.Valid {
+			entities[i].Head = bones.Pos[BoneHead]
+			entities[i].Neck = bones.Pos[BoneNeck]
+			entities[i].Body = bones.Pos[BoneSpine2]
 		}
 	}
 
@@ -445,6 +536,9 @@ func (g *Game) updateActionSequential(
 	offTeamNum uintptr,
 	offOrigin uintptr,
 	offEyeAngles uintptr,
+	offGameSceneNode uintptr,
+	offModelState uintptr,
+	offBoneArray uintptr,
 ) *ActionState {
 
 	//----------------------------------------------------------------------------//
@@ -516,6 +610,18 @@ func (g *Game) updateActionSequential(
 			Health: health,
 			Team:   team,
 			Head:   math.Vector3{X: origin.X, Y: origin.Y, Z: origin.Z + 72},
+		}
+
+		// Read bone data through the skeleton instance
+		entity.Bones = readBonesSequential(
+			memory, pawn,
+			offGameSceneNode, offModelState, offBoneArray,
+		)
+
+		if entity.Bones.Valid {
+			entity.Head = entity.Bones.Pos[BoneHead]
+			entity.Neck = entity.Bones.Pos[BoneNeck]
+			entity.Body = entity.Bones.Pos[BoneSpine2]
 		}
 
 		entities = append(entities, entity)

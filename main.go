@@ -180,15 +180,18 @@ func main() {
 		// Disable paging - we don't need page fault resolution
 		{"paging_enabled", leech.ConfigPagingEnabled, 0},
 
-		// Disable read retries at the device level. We handle
-		// failures with ZEROPAD_ON_FAIL, so retries just add
-		// latency on transient errors.
-		{"fpga_retry_on_error", leech.ConfigFpgaRetryOnError, 0},
+		// Enable read retries at the device level. With bone
+		// data adding more scatter passes per frame, transient
+		// USB errors are more likely. A single retry is cheaper
+		// than the timeout/abandon/recovery cycle.
+		{"fpga_retry_on_error", leech.ConfigFpgaRetryOnError, 1},
 
-		// Lower the FPGA read delay from the default 300-400us.
-		// This controls how long LeechCore waits between sending
-		// a TLP and reading the USB response buffer.
-		{"fpga_delay_read", leech.ConfigFpgaDelayRead, 150},
+		// FPGA read delay - how long LeechCore waits between
+		// sending a TLP and reading the USB response buffer.
+		// Default is 300-400us. Use 200us as a balance between
+		// latency and reliability with the larger per-frame
+		// read workload.
+		{"fpga_delay_read", leech.ConfigFpgaDelayRead, 200},
 	} {
 		if err := l.SetConfig(opt.option, opt.value); err != nil {
 			logger.Warn("failed to set leech config",
@@ -228,8 +231,14 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
+	// Start the health monitor
+	health := g.GetHealthMonitor()
+	health.Start(group, gctx)
+
+	//----------------------------------------------------------------------------//
+
 	// Start the overlay renderer
-	o := overlay.NewOverlay(g)
+	o := overlay.NewOverlay(g, g.GetTrigger())
 	defer o.Close()
 	o.Start(group, gctx)
 
@@ -239,6 +248,64 @@ func main() {
 	inp := input.NewInput()
 	defer inp.Close()
 	inp.Start(group, gctx)
+
+	// Start the key state reader for hotkey detection
+	keys := input.NewKeys()
+	defer keys.Close()
+	keys.Start(group, gctx)
+
+	//----------------------------------------------------------------------------//
+
+	// Start the triggerbot evaluation loop. The trigger is
+	// active only while middle mouse button is held down,
+	// detected via the /oasis_keys shared memory segment
+	// written by Moonlight.
+	trigger := g.GetTrigger()
+	triggerHb := health.Register("trigger")
+
+	group.Go(func() error {
+		logger.Dbg("starting trigger evaluator")
+
+		for {
+			triggerHb.Beat()
+
+			if gctx.Err() != nil {
+				logger.Dbg("stopping trigger evaluator")
+				return nil
+			}
+
+			start := time.Now()
+
+			// Toggle trigger based on middle mouse hold state
+			trigger.Enabled.Store(keys.IsMouseDown(input.KeysMouseMiddle))
+
+			action := g.GetActionState()
+			result := trigger.Evaluate(action)
+
+			if result.Active && inp.IsConnected() {
+				logger.Dbg("trigger fired",
+					logger.Int("bone", result.Bone),
+					logger.Float64("dist", result.Dist),
+					logger.Uint32("pending", inp.GetPending()),
+				)
+				inp.MousePress(input.ButtonLeft)
+				time.Sleep(15 * time.Millisecond)
+				inp.MouseRelease(input.ButtonLeft)
+			}
+
+			// Rate limit to 120 FPS like the action updater
+			elapsed := time.Since(start)
+			rem := (time.Second / 120) - elapsed
+			if rem > 0 {
+				select {
+				case <-gctx.Done():
+					logger.Dbg("stopping trigger evaluator")
+					return nil
+				case <-time.After(rem):
+				}
+			}
+		}
+	})
 
 	//----------------------------------------------------------------------------//
 

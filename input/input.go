@@ -120,6 +120,22 @@ func (i *Input) IsConnected() bool {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+// GetPending returns the number of entries waiting in the
+// ring buffer. Returns 0 if not connected.
+func (i *Input) GetPending() uint32 {
+
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+
+	if i.queue == nil {
+		return 0
+	}
+
+	return i.queue.GetPending()
+}
+
+////////////////////////////////////////////////////////////////////////////////
 //                                                                            //
 //                                 Keyboard                                   //
 //                                                                            //

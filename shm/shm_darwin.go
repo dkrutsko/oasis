@@ -58,7 +58,9 @@ func (h *unixHandle) unlinked() bool {
 	// macOS kernel-managed shm segments do not report a
 	// meaningful Nlink via fstat. Instead, try to re-open
 	// the segment by name. If the open fails, the segment
-	// has been unlinked.
+	// has been unlinked. If it succeeds but points to a
+	// different kernel object (different inode), the
+	// segment was replaced.
 	if h.name == "" {
 		return false
 	}
@@ -67,7 +69,19 @@ func (h *unixHandle) unlinked() bool {
 	if err != nil {
 		return true
 	}
+	defer unix.Close(fd)
 
-	unix.Close(fd)
-	return false
+	// Compare inodes to detect replacement. If Moonlight
+	// unlinks and recreates the segment, the name resolves
+	// to a new kernel object while our mmap still points
+	// to the old one.
+	var oldStat, newStat unix.Stat_t
+	if unix.Fstat(h.fd, &oldStat) != nil {
+		return true
+	}
+	if unix.Fstat(fd, &newStat) != nil {
+		return true
+	}
+
+	return oldStat.Ino != newStat.Ino
 }

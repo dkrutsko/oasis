@@ -283,7 +283,7 @@ func (p *Process) GetModules(ctx context.Context, filter *regexp.Regexp) ([]*Mod
 			errors.Error("error", err),
 		)
 	}
-	if success == 0 {
+	if success == 0 || mapPtr == 0 {
 		return nil, errors.New(
 			"failed to get modules",
 			errors.Uint32("pid", p.pid),
