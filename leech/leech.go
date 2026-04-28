@@ -6,34 +6,49 @@ import (
 	"syscall"
 	"unsafe"
 
-	"golang.org/x/sys/windows"
-
 	"github.com/dkrutsko/oasis/errors"
 	"github.com/dkrutsko/oasis/logger"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Options configures a Leech connection. Pass the configured
+// options to `New` to create a new instance.
+type Options struct {
+
+	// Args are the raw VMMDLL initialization arguments
+	// passed to the underlying library. For example:
+	// ["-device", "fpga"].
+	Args []string
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Leech manages a VMMDLL handle for reading and writing
+// memory on a remote Windows system via DMA. Use `New` to
+// create an instance and `Create` to establish the connection.
+// Use `Close` to release the handle when done. Leech is safe
+// for concurrent use by multiple goroutines.
 type Leech struct {
-	args   []string
+	opts   *Options
 	handle uintptr
 	lock   sync.RWMutex
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func New(args ...string) *Leech {
+// New returns a new Leech configured with the given options.
+// Call Create to establish the connection.
+func New(opts *Options) *Leech {
 
-	l := &Leech{
-		args:   args,
-		handle: 0,
-	}
-
-	return l
+	return &Leech{opts: opts}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Create loads the VMM library and initializes the DMA
+// connection using the arguments provided to New. If a
+// connection is already open, it is closed first.
 func (l *Leech) Create() error {
 
 	//----------------------------------------------------------------------------//
@@ -47,27 +62,36 @@ func (l *Leech) Create() error {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	// Close existing
+	// Close existing handle without calling Close
+	// to avoid deadlock since we already hold the lock
 	if l.handle != 0 {
-		err := l.Close()
+		_, err := vmmCall(vmmDll.close, l.handle)
 		if err != nil {
-			return err
+			return errors.New(
+				"failed to close vmm handle",
+				errors.Error("error", err),
+			)
 		}
+		l.handle = 0
 	}
 
 	//----------------------------------------------------------------------------//
 
 	// Count number of arguments
-	argc := uintptr(len(l.args))
+	argc := uintptr(len(l.opts.Args))
 
 	// Convert into C-style string array
-	argv := make([]uintptr, len(l.args))
-	for i, arg := range l.args {
+	argv := make([]uintptr, len(l.opts.Args))
+	for i, arg := range l.opts.Args {
 
 		// Try and convert string to C-style bytes
 		cStr, err := syscall.BytePtrFromString(arg)
 		if err != nil {
-			return err
+			return errors.New(
+				"failed to convert argument",
+				errors.String("arg", arg),
+				errors.Error("error", err),
+			)
 		}
 
 		// Store the C-style bytes in arguments
@@ -75,10 +99,11 @@ func (l *Leech) Create() error {
 	}
 
 	// Attempt to perform VMM initialization
-	handle, _, err := vmmDll.initializeEx.Call(
+	handle, err := vmmCall(
+		vmmDll.initializeEx,
 		argc, uintptr(unsafe.Pointer(&argv[0])), 0,
 	)
-	if err.(windows.Errno) != 0 {
+	if err != nil {
 		return errors.New(
 			"failed to initialize vmm",
 			errors.Error("error", err),
@@ -102,6 +127,9 @@ func (l *Leech) Create() error {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// Close releases the VMMDLL handle and disconnects from the
+// DMA device. Does nothing if no connection is open. Safe to
+// call multiple times.
 func (l *Leech) Close() error {
 
 	//----------------------------------------------------------------------------//
@@ -117,8 +145,8 @@ func (l *Leech) Close() error {
 	//----------------------------------------------------------------------------//
 
 	// Try and close the initialized handle
-	_, _, err := vmmDll.close.Call(l.handle)
-	if err.(windows.Errno) != 0 {
+	_, err := vmmCall(vmmDll.close, l.handle)
+	if err != nil {
 		return errors.New(
 			"failed to close vmm handle",
 			errors.Error("error", err),
@@ -137,6 +165,7 @@ func (l *Leech) Close() error {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// IsValid returns true if the VMMDLL handle is initialized.
 func (l *Leech) IsValid() bool {
 
 	l.lock.RLock()
@@ -147,6 +176,100 @@ func (l *Leech) IsValid() bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetConfig retrieves a VMMDLL configuration value. Use the
+// Config* constants to specify which option to query. Returns
+// an error if the handle is not initialized or the query
+// fails.
+func (l *Leech) GetConfig(option uint64) (uint64, error) {
+
+	//----------------------------------------------------------------------------//
+
+	l.lock.RLock()
+	defer l.lock.RUnlock()
+
+	if l.handle == 0 {
+		return 0, errors.New("leech not initialized")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	var value uint64
+
+	success, err := vmmCall(
+		vmmDll.configGet,
+		l.handle,
+		uintptr(option),
+		uintptr(unsafe.Pointer(&value)),
+	)
+	if err != nil {
+		return 0, errors.New(
+			"failed to get config",
+			errors.Error("error", err),
+		)
+	}
+	if success == 0 {
+		return 0, errors.New(
+			"failed to get config",
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	return value, nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// SetConfig sets a VMMDLL configuration value. Use the
+// Config* constants to specify which option to set. Returns
+// an error if the handle is not initialized or the operation
+// fails.
+func (l *Leech) SetConfig(option uint64, value uint64) error {
+
+	//----------------------------------------------------------------------------//
+
+	l.lock.RLock()
+	defer l.lock.RUnlock()
+
+	if l.handle == 0 {
+		return errors.New("leech not initialized")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	success, err := vmmCall(
+		vmmDll.configSet,
+		l.handle,
+		uintptr(option),
+		uintptr(value),
+	)
+	if err != nil {
+		return errors.New(
+			"failed to set config",
+			errors.Error("error", err),
+		)
+	}
+	if success == 0 {
+		return errors.New(
+			"failed to set config",
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	return nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetProcess retrieves information about a single process
+// identified by `pid`. Returns an error if the handle is not
+// initialized, the PID is not found, or the VMMDLL response
+// fails validation.
 func (l *Leech) GetProcess(pid uint32) (*Process, error) {
 
 	//----------------------------------------------------------------------------//
@@ -173,13 +296,14 @@ func (l *Leech) GetProcess(pid uint32) (*Process, error) {
 	size := unsafe.Sizeof(vmmProcessInformation{})
 
 	// Attempt to retrieve information about the process
-	success, _, err := vmmDll.processGetInformation.Call(
+	success, err := vmmCall(
+		vmmDll.processGetInformation,
 		l.handle,
 		uintptr(pid),
 		uintptr(unsafe.Pointer(&process)),
 		uintptr(unsafe.Pointer(&size)),
 	)
-	if err.(windows.Errno) != 0 {
+	if err != nil {
 		return nil, errors.New(
 			"failed to get process info",
 			errors.Uint32("pid", pid),
@@ -251,6 +375,11 @@ func (l *Leech) GetProcess(pid uint32) (*Process, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetProcessList retrieves information about all processes on
+// the target system. `filter` accepts a regular expression
+// which is matched against process names. Pass nil to include
+// all processes. If `onlyActive` is true, exited processes are
+// excluded. Returns an error if the handle is not initialized.
 func (l *Leech) GetProcessList(filter *regexp.Regexp, onlyActive bool) ([]*Process, error) {
 
 	//----------------------------------------------------------------------------//
@@ -271,12 +400,13 @@ func (l *Leech) GetProcessList(filter *regexp.Regexp, onlyActive bool) ([]*Proce
 	var count uint32
 
 	// Attempt to retrieve information about all processes
-	success, _, err := vmmDll.processGetInformationAll.Call(
+	success, err := vmmCall(
+		vmmDll.processGetInformationAll,
 		l.handle,
 		uintptr(unsafe.Pointer(&items)),
 		uintptr(unsafe.Pointer(&count)),
 	)
-	if err.(windows.Errno) != 0 {
+	if err != nil {
 		return nil, errors.New(
 			"failed to list process info",
 			errors.Error("error", err),
@@ -290,7 +420,7 @@ func (l *Leech) GetProcessList(filter *regexp.Regexp, onlyActive bool) ([]*Proce
 
 	defer func() {
 		// Try and free the allocated memory
-		_, _, _ = vmmDll.memFree.Call(items)
+		_, _ = vmmCall(vmmDll.memFree, items)
 	}()
 
 	//----------------------------------------------------------------------------//

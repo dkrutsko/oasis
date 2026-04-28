@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -26,9 +27,16 @@ type Options struct {
 type Game struct {
 	options *Options
 
-	scanner *ScannerState
-	action  *ActionState
-	camera  *CameraState
+	scanner      *ScannerState
+	memory       *leech.Memory
+	cameraMemory *leech.Memory
+	scatter      *leech.Scatter
+	action       *ActionState
+	camera       *CameraState
+
+	// Number of DMA goroutines currently abandoned and
+	// stuck in a cgo call. Shared across updaters.
+	abandoned atomic.Int32
 
 	offsets   map[string][]byte
 	strCache  map[string]string
@@ -107,6 +115,11 @@ func (g *Game) Create() error {
 		logger.Info("looking for the game")
 
 		for {
+			// Trigger a process list refresh before scanning.
+			// With -norefresh, MemProcFS does not enumerate
+			// processes automatically.
+			g.options.Leech.SetConfig(leech.ConfigRefreshFreqMedium, 1)
+
 			// Retrieve the new scanner state
 			next := g.updateScanner(g.scanner)
 
@@ -121,6 +134,24 @@ func (g *Game) Create() error {
 				if next.Result == ScannerResultSuccess {
 
 					attached = true
+
+					// Create cached memory for entity reads
+					mem := next.Process.GetMemory()
+					mem.CreateCache(16384, 4096, 5242880, 1048576, 10485760)
+					g.memory = mem
+
+					// Separate uncached memory for camera reads
+					g.cameraMemory = next.Process.GetMemory()
+
+					// Create scatter handle for batched entity reads
+					scatter, sErr := next.Process.GetScatter(leech.ScatterFlagDefault)
+					if sErr != nil {
+						logger.Warn("failed to create scatter handle",
+							logger.Error("error", sErr),
+						)
+					}
+					g.scatter = scatter
+
 					logger.Info(
 						"attached",
 						logger.Uint32("pid", next.Process.GetPid()),
@@ -131,6 +162,19 @@ func (g *Game) Create() error {
 				} else if attached {
 
 					attached = false
+
+					// Clean up memory instances
+					if g.memory != nil {
+						g.memory.DeleteCache()
+						g.memory = nil
+					}
+					g.cameraMemory = nil
+
+					if g.scatter != nil {
+						g.scatter.Close()
+						g.scatter = nil
+					}
+
 					logger.Info("detached")
 				}
 
@@ -159,31 +203,112 @@ func (g *Game) Create() error {
 	g.options.Group.Go(func() error {
 		logger.Dbg("starting action updater")
 
+		var actionFlight atomic.Bool
+
+		// Rolling average tracking
+		var totalDur time.Duration
+		var frameCount int
+		lastLog := time.Now()
+
 		for {
-			// Check whether stopping the app
 			if g.options.Gctx.Err() != nil {
 				logger.Dbg("stopping action updater")
 				return nil
 			}
 
-			// Get a start time
 			start := time.Now()
 
-			// Retrieve the new action state
-			next := g.updateAction(g.scanner)
-
-			// Set state if update was successful
-			if next.Result == ActionResultSuccess {
-				g.action = next
+			// Skip this frame if the previous DMA call is
+			// still stuck. The overlay renders last-known
+			// data until DMA recovers.
+			if actionFlight.Load() {
+				select {
+				case <-g.options.Gctx.Done():
+					logger.Dbg("stopping action updater")
+					return nil
+				case <-time.After(time.Second / 120):
+				}
+				continue
 			}
 
-			// Calculate time for update
-			elapsed := time.Since(start)
+			actionFlight.Store(true)
 
-			// Calculate remaining time for frame
+			done := make(chan *ActionState, 1)
+			go func() {
+				result := g.updateAction(g.scanner)
+				actionFlight.Store(false)
+				done <- result
+			}()
+
+			timer := time.NewTimer(100 * time.Millisecond)
+
+			select {
+			case <-g.options.Gctx.Done():
+				timer.Stop()
+				logger.Dbg("stopping action updater")
+				return nil
+
+			case next := <-done:
+				timer.Stop()
+				dur := time.Since(start)
+				totalDur += dur
+				frameCount++
+
+				if next.Result == ActionResultSuccess {
+					g.action = next
+				}
+
+			case <-timer.C:
+				count := g.abandoned.Add(1)
+				logger.Warn("action dma timed out",
+					logger.Int("abandoned", int(count)),
+				)
+
+				// The stuck goroutine clears the flag and
+				// decrements when it eventually completes
+				go func() {
+					<-done
+					g.abandoned.Add(-1)
+				}()
+
+				if s := g.scanner; s != nil &&
+					s.Result == ScannerResultSuccess {
+
+					mem := s.Process.GetMemory()
+					mem.CreateCache(
+						16384, 4096, 5242880, 1048576, 10485760,
+					)
+					g.memory = mem
+
+					scatter, sErr := s.Process.GetScatter(leech.ScatterFlagDefault)
+					if sErr == nil {
+						g.scatter = scatter
+					}
+				}
+			}
+
+			// Log rolling averages once per second
+			if frameCount > 0 && time.Since(lastLog) >= time.Second {
+				avg := totalDur / time.Duration(frameCount)
+				logger.Dbg("action stats",
+					logger.Duration("avg", avg),
+					logger.Int("frames", frameCount),
+				)
+				totalDur = 0
+				frameCount = 0
+				lastLog = time.Now()
+			}
+
+			// Rate limit to target frame rate
+			elapsed := time.Since(start)
 			rem := (time.Second / 120) - elapsed
 			if rem > 0 {
-				time.Sleep(rem)
+				select {
+				case <-g.options.Gctx.Done():
+					logger.Dbg("stopping action updater")
+					return nil
+				case <-time.After(rem):
+				}
 			}
 		}
 	})
@@ -193,32 +318,97 @@ func (g *Game) Create() error {
 	g.options.Group.Go(func() error {
 		logger.Dbg("starting camera updater")
 
+		var cameraFlight atomic.Bool
+
+		var totalDur time.Duration
+		var frameCount int
+		lastLog := time.Now()
+
 		for {
-			// Check whether stopping the app
 			if g.options.Gctx.Err() != nil {
 				logger.Dbg("stopping camera updater")
 				return nil
 			}
 
-			// Get a start time
 			start := time.Now()
 
-			// Retrieve the new camera state
-			next := g.updateCamera(g.scanner)
-
-			// Set state if update was successful
-			if next.Result == CameraResultSuccess {
-				g.camera = next
-				//fmt.Println(g.camera.View.String()) // TODO: REMOVE THIS LINE
+			if cameraFlight.Load() {
+				select {
+				case <-g.options.Gctx.Done():
+					logger.Dbg("stopping camera updater")
+					return nil
+				case <-time.After(time.Second / 120):
+				}
+				continue
 			}
 
-			// Calculate time for update
-			elapsed := time.Since(start)
+			cameraFlight.Store(true)
 
-			// Calculate remaining time for frame
+			done := make(chan *CameraState, 1)
+			go func() {
+				result := g.updateCamera(g.scanner)
+				cameraFlight.Store(false)
+				done <- result
+			}()
+
+			timer := time.NewTimer(50 * time.Millisecond)
+
+			select {
+			case <-g.options.Gctx.Done():
+				timer.Stop()
+				logger.Dbg("stopping camera updater")
+				return nil
+
+			case next := <-done:
+				timer.Stop()
+				dur := time.Since(start)
+				totalDur += dur
+				frameCount++
+
+				if next.Result == CameraResultSuccess {
+					g.camera = next
+				}
+
+			case <-timer.C:
+				count := g.abandoned.Add(1)
+				logger.Warn("camera dma timed out",
+					logger.Int("abandoned", int(count)),
+				)
+
+				go func() {
+					<-done
+					g.abandoned.Add(-1)
+				}()
+
+				if s := g.scanner; s != nil &&
+					s.Result == ScannerResultSuccess {
+
+					g.cameraMemory = s.Process.GetMemory()
+				}
+			}
+
+			// Log rolling averages once per second
+			if frameCount > 0 && time.Since(lastLog) >= time.Second {
+				avg := totalDur / time.Duration(frameCount)
+				logger.Dbg("camera stats",
+					logger.Duration("avg", avg),
+					logger.Int("frames", frameCount),
+				)
+				totalDur = 0
+				frameCount = 0
+				lastLog = time.Now()
+			}
+
+			// Rate limit to target frame rate
+			elapsed := time.Since(start)
 			rem := (time.Second / 120) - elapsed
 			if rem > 0 {
-				time.Sleep(rem)
+				select {
+				case <-g.options.Gctx.Done():
+					logger.Dbg("stopping camera updater")
+					return nil
+				case <-time.After(rem):
+				}
 			}
 		}
 	})

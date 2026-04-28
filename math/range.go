@@ -84,4 +84,3 @@ func (r Range) Contains(value float64, inclusive bool) bool {
 
 	return value > r.Min && value < r.Max
 }
-

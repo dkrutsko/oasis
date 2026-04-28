@@ -29,9 +29,11 @@ go mod tidy
 printf -- "\n\e[1;32mFormatting Go code\e[0m\n"
 gofmt -s -w .
 
-# Run static analysis checks on all Go packages
+# Run static analysis checks on all Go packages. The unsafeptr
+# analyzer is disabled because the leech package requires the
+# uintptr(unsafe.Pointer(...)) pattern for DLL interop.
 printf -- "\n\e[1;32mRunning static analysis\e[0m\n"
-go vet ./...
+go vet -unsafeptr=false ./...
 
 ##----------------------------------------------------------------------------##
 

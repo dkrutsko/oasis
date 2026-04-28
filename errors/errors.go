@@ -84,6 +84,16 @@ func (e *structuredError) Error() string {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (e *structuredError) Is(target error) bool {
+	t, ok := target.(*structuredError)
+	if !ok {
+		return false
+	}
+	return e.msg == t.msg
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func Unwrap(err error) error {
 
 	// If has required method

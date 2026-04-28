@@ -88,7 +88,7 @@ printf -- "\n\e[1;32mBuilding Windows binary\e[0m\n"
 make publish
 
 printf -- "\n\e[1;32mCopying runtime to host\e[0m\n"
-cp -r ./bin/* "${_dir}"
+cp -r ./bin/* "${_dir}" # TODO: Switch this to rsync with --delete when entire runtime is present
 
 ##----------------------------------------------------------------------------##
 

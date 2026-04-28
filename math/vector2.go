@@ -273,6 +273,28 @@ func (v Vector2) ToSlice64() []float64 {
 	}
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes32 encodes the components as 8 bytes of little-endian float32 values.
+func (v Vector2) ToBytes32() []byte {
+
+	b := make([]byte, 8)
+	byteOrder.PutUint32(b[0:4], sysMath.Float32bits(float32(v.X)))
+	byteOrder.PutUint32(b[4:8], sysMath.Float32bits(float32(v.Y)))
+	return b
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes64 encodes the components as 16 bytes of little-endian float64 values.
+func (v Vector2) ToBytes64() []byte {
+
+	b := make([]byte, 16)
+	byteOrder.PutUint64(b[0:8], sysMath.Float64bits(v.X))
+	byteOrder.PutUint64(b[8:16], sysMath.Float64bits(v.Y))
+	return b
+}
+
 //----------------------------------------------------------------------------//
 // Static                                                                     //
 //----------------------------------------------------------------------------//
@@ -309,6 +331,38 @@ func Vector2FromSlice64(values []float64) (Vector2, error) {
 	}
 
 	return v, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Vector2FromBytes32 creates a Vector2 from a byte slice of at
+// least 8 bytes containing 2 little-endian float32 values.
+func Vector2FromBytes32(data []byte) (Vector2, error) {
+
+	if len(data) < 8 {
+		return Vector2Zero, ErrInvalidLength
+	}
+
+	return Vector2{
+		X: float64(sysMath.Float32frombits(byteOrder.Uint32(data[0:4]))),
+		Y: float64(sysMath.Float32frombits(byteOrder.Uint32(data[4:8]))),
+	}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Vector2FromBytes64 creates a Vector2 from a byte slice of at
+// least 16 bytes containing 2 little-endian float64 values.
+func Vector2FromBytes64(data []byte) (Vector2, error) {
+
+	if len(data) < 16 {
+		return Vector2Zero, ErrInvalidLength
+	}
+
+	return Vector2{
+		X: sysMath.Float64frombits(byteOrder.Uint64(data[0:8])),
+		Y: sysMath.Float64frombits(byteOrder.Uint64(data[8:16])),
+	}, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -501,4 +555,3 @@ func (v Vector2) Le(value Vector2) bool {
 func (v Vector2) Ge(value Vector2) bool {
 	return v.Compare(value) >= 0
 }
-

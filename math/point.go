@@ -90,4 +90,3 @@ func (p Point) Neg() Point {
 
 	return Point{-p.X, -p.Y}
 }
-

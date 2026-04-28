@@ -27,6 +27,12 @@ ARGUMENTS
 
 	-debug (false) - boolean
 	 Whether to output extended logging information for debugging.
+
+	-viewer (false) - boolean
+	 Launch the debug viewer to preview overlay output.
+
+	-pprof (false) - boolean
+	 Start a pprof HTTP server on localhost:6060 for profiling.
 `,
 	)
 }

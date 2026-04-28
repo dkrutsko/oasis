@@ -396,6 +396,34 @@ func (c Color) ToSlice64() []float64 {
 	return []float64{c.R, c.G, c.B, c.A}
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes32 encodes the components as 16 bytes of
+// little-endian float32 values in RGBA order.
+func (c Color) ToBytes32() []byte {
+
+	b := make([]byte, 16)
+	byteOrder.PutUint32(b[0:4], sysMath.Float32bits(float32(c.R)))
+	byteOrder.PutUint32(b[4:8], sysMath.Float32bits(float32(c.G)))
+	byteOrder.PutUint32(b[8:12], sysMath.Float32bits(float32(c.B)))
+	byteOrder.PutUint32(b[12:16], sysMath.Float32bits(float32(c.A)))
+	return b
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes64 encodes the components as 32 bytes of
+// little-endian float64 values in RGBA order.
+func (c Color) ToBytes64() []byte {
+
+	b := make([]byte, 32)
+	byteOrder.PutUint64(b[0:8], sysMath.Float64bits(c.R))
+	byteOrder.PutUint64(b[8:16], sysMath.Float64bits(c.G))
+	byteOrder.PutUint64(b[16:24], sysMath.Float64bits(c.B))
+	byteOrder.PutUint64(b[24:32], sysMath.Float64bits(c.A))
+	return b
+}
+
 //----------------------------------------------------------------------------//
 // Static                                                                     //
 //----------------------------------------------------------------------------//
@@ -582,6 +610,42 @@ func ColorFromSlice64(values []float64) (Color, error) {
 	}, nil
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+// ColorFromBytes32 creates a Color from a byte slice of at least
+// 16 bytes containing 4 little-endian float32 values in RGBA order.
+func ColorFromBytes32(data []byte) (Color, error) {
+
+	if len(data) < 16 {
+		return ColorZero, ErrInvalidLength
+	}
+
+	return Color{
+		R: float64(sysMath.Float32frombits(byteOrder.Uint32(data[0:4]))),
+		G: float64(sysMath.Float32frombits(byteOrder.Uint32(data[4:8]))),
+		B: float64(sysMath.Float32frombits(byteOrder.Uint32(data[8:12]))),
+		A: float64(sysMath.Float32frombits(byteOrder.Uint32(data[12:16]))),
+	}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ColorFromBytes64 creates a Color from a byte slice of at least
+// 32 bytes containing 4 little-endian float64 values in RGBA order.
+func ColorFromBytes64(data []byte) (Color, error) {
+
+	if len(data) < 32 {
+		return ColorZero, ErrInvalidLength
+	}
+
+	return Color{
+		R: sysMath.Float64frombits(byteOrder.Uint64(data[0:8])),
+		G: sysMath.Float64frombits(byteOrder.Uint64(data[8:16])),
+		B: sysMath.Float64frombits(byteOrder.Uint64(data[16:24])),
+		A: sysMath.Float64frombits(byteOrder.Uint64(data[24:32])),
+	}, nil
+}
+
 //----------------------------------------------------------------------------//
 // Operators                                                                  //
 //----------------------------------------------------------------------------//
@@ -649,4 +713,3 @@ func (c Color) DivScalar(scalar float64) Color {
 
 	return Color{c.R / scalar, c.G / scalar, c.B / scalar, c.A / scalar}
 }
-

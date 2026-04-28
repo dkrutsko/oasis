@@ -20,6 +20,12 @@ type Config struct {
 
 	// Enables verbose debug logging.
 	Debug bool
+
+	// Launches the debug viewer to preview overlay output.
+	Viewer bool
+
+	// Starts a pprof HTTP server on localhost:6060 for profiling.
+	Pprof bool
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -59,6 +65,8 @@ func LoadConfig() (*Config, error) {
 	flagSet.BoolVar(&result.Version, "version", false, "")
 	flagSet.BoolVar(&result.Json, "json", false, "")
 	flagSet.BoolVar(&result.Debug, "debug", false, "")
+	flagSet.BoolVar(&result.Viewer, "viewer", false, "")
+	flagSet.BoolVar(&result.Pprof, "pprof", false, "")
 
 	// Use custom output for usage
 	flagSet.Usage = Usage

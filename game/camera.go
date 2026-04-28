@@ -46,7 +46,7 @@ func (s CameraResult) String() string {
 type CameraState struct {
 	Result CameraResult
 	Time   time.Time
-	View   math.Matrix
+	View   math.Matrix4
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -56,7 +56,7 @@ func NewCameraState() *CameraState {
 	return &CameraState{
 		Result: CameraResultNoValue,
 		Time:   time.Now(),
-		View:   math.MatrixIdentity,
+		View:   math.Matrix4Identity,
 	}
 }
 
@@ -81,8 +81,11 @@ func (g *Game) updateCamera(scanner *ScannerState) *CameraState {
 	// Grab client module base address
 	client := scanner.Client.GetBase()
 
-	// Create a memory object for reading
-	memory := scanner.Process.GetMemory()
+	// Use the persistent memory instance for camera reads
+	memory := g.cameraMemory
+	if memory == nil {
+		memory = scanner.Process.GetMemory()
+	}
 
 	//----------------------------------------------------------------------------//
 
@@ -92,7 +95,7 @@ func (g *Game) updateCamera(scanner *ScannerState) *CameraState {
 		return result
 	}
 
-	result.View, err = ReadMatrix(memory, client+offViewMatrix)
+	result.View, err = ReadMatrix4(memory, client+offViewMatrix)
 	if err != nil {
 		result.Result = CameraResultReadFail
 		return result

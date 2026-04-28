@@ -290,6 +290,32 @@ func (q Quaternion) ToSlice64() []float64 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// ToBytes32 encodes the components as 16 bytes of little-endian float32 values.
+func (q Quaternion) ToBytes32() []byte {
+
+	b := make([]byte, 16)
+	byteOrder.PutUint32(b[0:4], sysMath.Float32bits(float32(q.X)))
+	byteOrder.PutUint32(b[4:8], sysMath.Float32bits(float32(q.Y)))
+	byteOrder.PutUint32(b[8:12], sysMath.Float32bits(float32(q.Z)))
+	byteOrder.PutUint32(b[12:16], sysMath.Float32bits(float32(q.W)))
+	return b
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// ToBytes64 encodes the components as 32 bytes of little-endian float64 values.
+func (q Quaternion) ToBytes64() []byte {
+
+	b := make([]byte, 32)
+	byteOrder.PutUint64(b[0:8], sysMath.Float64bits(q.X))
+	byteOrder.PutUint64(b[8:16], sysMath.Float64bits(q.Y))
+	byteOrder.PutUint64(b[16:24], sysMath.Float64bits(q.Z))
+	byteOrder.PutUint64(b[24:32], sysMath.Float64bits(q.W))
+	return b
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // ToPacked compresses the quaternion into a 64-bit integer. The
 // packed format stores X in the upper 22 bits and Y and Z in 21
 // bits each. The W component is discarded and reconstructed from
@@ -343,6 +369,42 @@ func QuaternionFromSlice64(values []float64) (Quaternion, error) {
 	}
 
 	return q, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// QuaternionFromBytes32 creates a Quaternion from a byte slice
+// of at least 16 bytes containing 4 little-endian float32 values.
+func QuaternionFromBytes32(data []byte) (Quaternion, error) {
+
+	if len(data) < 16 {
+		return QuaternionZero, ErrInvalidLength
+	}
+
+	return Quaternion{
+		X: float64(sysMath.Float32frombits(byteOrder.Uint32(data[0:4]))),
+		Y: float64(sysMath.Float32frombits(byteOrder.Uint32(data[4:8]))),
+		Z: float64(sysMath.Float32frombits(byteOrder.Uint32(data[8:12]))),
+		W: float64(sysMath.Float32frombits(byteOrder.Uint32(data[12:16]))),
+	}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// QuaternionFromBytes64 creates a Quaternion from a byte slice
+// of at least 32 bytes containing 4 little-endian float64 values.
+func QuaternionFromBytes64(data []byte) (Quaternion, error) {
+
+	if len(data) < 32 {
+		return QuaternionZero, ErrInvalidLength
+	}
+
+	return Quaternion{
+		X: sysMath.Float64frombits(byteOrder.Uint64(data[0:8])),
+		Y: sysMath.Float64frombits(byteOrder.Uint64(data[8:16])),
+		Z: sysMath.Float64frombits(byteOrder.Uint64(data[16:24])),
+		W: sysMath.Float64frombits(byteOrder.Uint64(data[24:32])),
+	}, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -516,4 +578,3 @@ func (q Quaternion) Neg() Quaternion {
 		-q.W,
 	}
 }
-
