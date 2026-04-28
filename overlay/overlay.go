@@ -88,6 +88,12 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 	defer func() {
 		if shm != nil {
+			// Clear the inactive buffer and flip so Moonlight
+			// picks up a blank frame. We only clear the
+			// inactive side to avoid tearing on the buffer
+			// Moonlight is currently reading.
+			clear(shm.WriteBuffer())
+			shm.Flip()
 			shm.Close()
 		}
 	}()
