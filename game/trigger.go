@@ -12,14 +12,12 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
-	// Radius used for ray-sphere intersection on head and
-	// neck bones. Smaller than body for precision.
-	triggerHeadRadius = 4.0
-	triggerNeckRadius = 4.5
+	// Radius for the head sphere.
+	TriggerHeadRadius = 5.5
 
-	// Radius used for ray-sphere intersection on body
-	// bones (spine). Larger to be more forgiving.
-	triggerBodyRadius = 6.0
+	// Radius for the body capsule that extends from neck
+	// to pelvis.
+	TriggerBodyRadius = 8.0
 
 	// Minimum time between trigger fires to avoid spamming
 	// clicks faster than the game can register.
@@ -88,11 +86,17 @@ func (t *Trigger) Evaluate(action *ActionState) TriggerResult {
 	player := action.Player
 
 	// Build the aim ray from the player's eye position
-	// using their view angles.
-	eyePos := math.Vector3{
-		X: player.Origin.X,
-		Y: player.Origin.Y,
-		Z: player.Origin.Z + 64.0,
+	// using their view angles. Use the actual head bone
+	// when available for accuracy.
+	var eyePos math.Vector3
+	if player.Bones.Valid && !player.Bones.Pos[BoneHead].IsZero() {
+		eyePos = player.Bones.Pos[BoneHead]
+	} else {
+		eyePos = math.Vector3{
+			X: player.Origin.X,
+			Y: player.Origin.Y,
+			Z: player.Origin.Z + 64.0,
+		}
 	}
 
 	yawRad := player.Angles.Y * sysMath.Pi / 180.0
@@ -131,34 +135,35 @@ func (t *Trigger) Evaluate(action *ActionState) TriggerResult {
 			continue
 		}
 
-		// Test bone hitboxes from most to least valuable
-		targets := []struct {
-			bone   int
-			radius float64
-		}{
-			{BoneHead, triggerHeadRadius},
-			{BoneNeck, triggerNeckRadius},
-			{BoneSpine3, triggerBodyRadius},
-			{BoneSpine2, triggerBodyRadius},
-			{BoneSpine1, triggerBodyRadius},
-		}
+		headPos := entity.Bones.Pos[BoneHead]
+		neckPos := entity.Bones.Pos[BoneNeck]
+		pelvisPos := entity.Bones.Pos[BonePelvis]
 
-		for _, tgt := range targets {
-			pos := entity.Bones.Pos[tgt.bone]
-			if pos.X == 0 && pos.Y == 0 && pos.Z == 0 {
-				continue
-			}
-
-			sphere := geometry.Sphere{
-				Center: pos,
-				Radius: tgt.radius,
-			}
-
-			dist, hit := ray.IntersectSphere(sphere)
+		// Head sphere
+		if !headPos.IsZero() {
+			dist, hit := ray.IntersectSphere(geometry.Sphere{
+				Center: headPos,
+				Radius: TriggerHeadRadius,
+			})
 			if hit && dist < best.Dist {
 				best.Active = true
 				best.Target = entity
-				best.Bone = tgt.bone
+				best.Bone = BoneHead
+				best.Dist = dist
+			}
+		}
+
+		// Body capsule from neck to pelvis
+		if !neckPos.IsZero() && !pelvisPos.IsZero() {
+			dist, hit := ray.IntersectCapsule(geometry.Capsule{
+				Start:  neckPos,
+				End:    pelvisPos,
+				Radius: TriggerBodyRadius,
+			})
+			if hit && dist < best.Dist {
+				best.Active = true
+				best.Target = entity
+				best.Bone = BoneNeck
 				best.Dist = dist
 			}
 		}

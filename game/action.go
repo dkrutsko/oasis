@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dkrutsko/oasis/leech"
+	"github.com/dkrutsko/oasis/logger"
 	"github.com/dkrutsko/oasis/math"
 )
 
@@ -123,6 +124,17 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 	}
 	memory.ClearCache()
 
+	// Periodically refresh VMM's TLB cache. With -norefresh,
+	// page table translations go stale when the OS remaps
+	// pages. This causes reads to return zeros for valid
+	// addresses and entities silently disappear. The refresh
+	// takes ~100ms so we limit it to every 3 seconds.
+	now := time.Now()
+	if now.Sub(g.lastTlbRefresh) >= 3*time.Second {
+		g.lastTlbRefresh = now
+		g.options.Leech.SetConfig(leech.ConfigRefreshFreqTlb, 1)
+	}
+
 	//----------------------------------------------------------------------------//
 
 	// Get module-level offsets
@@ -194,6 +206,10 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 
 	// Not in game
 	if localPawnAddr == 0 {
+		if now.Sub(g.lastEntityLog) >= time.Second {
+			g.lastEntityLog = now
+			logger.Dbg("not in game, local pawn is null")
+		}
 		result.Result = ActionResultSuccess
 		return result
 	}
@@ -498,6 +514,22 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 
 	if playerIdx >= 0 {
 		result.Player = &result.Entities[playerIdx]
+	}
+
+	// Debug: log entity count once per second
+	if now := time.Now(); now.Sub(g.lastEntityLog) >= time.Second {
+		g.lastEntityLog = now
+		alive := 0
+		for i := range entities {
+			if entities[i].Valid && entities[i].Health > 0 {
+				alive++
+			}
+		}
+		logger.Dbg("entity count",
+			logger.Int("total", len(entities)),
+			logger.Int("alive", alive),
+			logger.Bool("has_player", playerIdx >= 0),
+		)
 	}
 
 	// Calculate distances from local player

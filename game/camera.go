@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dkrutsko/oasis/leech"
 	"github.com/dkrutsko/oasis/math"
 )
 
@@ -85,6 +86,18 @@ func (g *Game) updateCamera(scanner *ScannerState) *CameraState {
 	memory := g.cameraMemory
 	if memory == nil {
 		memory = scanner.Process.GetMemory()
+	}
+
+	// Refresh the camera VMM's TLB cache every 5 seconds.
+	// In dual FPGA mode, each VMM has its own TLB cache.
+	now := time.Now()
+	if now.Sub(g.lastCameraTlbRefresh) >= 5*time.Second {
+		g.lastCameraTlbRefresh = now
+		cameraLeech := g.options.CameraLeech
+		if cameraLeech == nil {
+			cameraLeech = g.options.Leech
+		}
+		cameraLeech.SetConfig(leech.ConfigRefreshFreqTlb, 1)
 	}
 
 	//----------------------------------------------------------------------------//

@@ -4,14 +4,11 @@ package overlay
 
 import (
 	"context"
-	"image"
 	"image/color"
 	sysMath "math"
 	"time"
 
 	"golang.org/x/sync/errgroup"
-
-	"github.com/fogleman/gg"
 
 	"github.com/dkrutsko/oasis/game"
 	"github.com/dkrutsko/oasis/logger"
@@ -25,8 +22,6 @@ const (
 	// segment is not yet available.
 	overlayWidth  = 1920
 	overlayHeight = 1080
-
-	overlayFps = 60
 
 	// How often to check if the shared memory segment still
 	// exists. Moonlight unlinks it when the stream ends.
@@ -83,7 +78,7 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 	var (
 		shm       *SharedMemory
-		contexts  [2]*gg.Context
+		canvases  [shmBufferCount]Canvas
 		width     int
 		height    int
 		lastCheck time.Time
@@ -91,12 +86,12 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 	defer func() {
 		if shm != nil {
-			// Clear both buffers so Moonlight picks up a blank
-			// frame regardless of which side it reads next.
-			clear(shm.WriteBuffer())
-			shm.Flip()
-			clear(shm.WriteBuffer())
-			shm.Flip()
+			// Clear all three buffers and publish so Moonlight
+			// picks up a blank frame on shutdown.
+			for i := uint32(0); i < shmBufferCount; i++ {
+				clear(shm.GetBuffer(i))
+			}
+			shm.Publish(0)
 			shm.Close()
 		}
 	}()
@@ -131,21 +126,18 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 			// Create a gg context for each buffer so we can
 			// draw directly into shared memory. This avoids
 			// the per-frame copy from a separate canvas.
-			if contexts[0] == nil || newW != width || newH != height {
+			if newW != width || newH != height {
 				width = newW
 				height = newH
-				rect := image.Rect(0, 0, width, height)
 				stride := width * 4
 
-				for i := uint32(0); i < 2; i++ {
-					img := &image.RGBA{
+				for i := uint32(0); i < shmBufferCount; i++ {
+					canvases[i] = Canvas{
 						Pix:    shm.GetBuffer(i),
+						Width:  width,
+						Height: height,
 						Stride: stride,
-						Rect:   rect,
 					}
-					contexts[i] = gg.NewContextForRGBA(img)
-					contexts[i].SetLineCapButt()
-					contexts[i].SetLineJoinBevel()
 				}
 			}
 
@@ -159,17 +151,15 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 		//--------------------------------------------------------------------//
 
-		// Get a start time
-		start := time.Now()
+		hb.Beat()
 
-		// Pick the context that draws into the inactive
-		// buffer. Moonlight reads from the active buffer
-		// so there is no contention.
-		dc := contexts[shm.GetInactiveIndex()]
+		// Pick a buffer that is not being read by Moonlight
+		// and is not the latest completed frame.
+		writeIdx := shm.GetWriteIndex()
+		dc := &canvases[writeIdx]
 
-		// Clear to fully transparent
-		dc.SetColor(color.NRGBA{0, 0, 0, 0})
 		dc.Clear()
+		hb.Beat()
 
 		// Get game state snapshots
 		camera := o.game.GetCameraState()
@@ -182,6 +172,7 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 			o.renderEntities(dc, camera, action, width, height)
 		}
+		hb.Beat()
 
 		// Crosshair at screen center. Red when the triggerbot
 		// is enabled, green otherwise. Draw outline first,
@@ -190,29 +181,21 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 		cy := float64(height) / 2
 
 		// Black outline
-		dc.SetColor(color.NRGBA{0, 0, 0, 255})
-		dc.SetLineWidth(4)
-		dc.DrawLine(cx-20, cy, cx+20, cy)
-		dc.Stroke()
-		dc.DrawLine(cx, cy-20, cx, cy+20)
-		dc.Stroke()
+		dc.DrawLine(cx-20, cy, cx+20, cy, 4, color.NRGBA{0, 0, 0, 255})
+		dc.DrawLine(cx, cy-20, cx, cy+20, 4, color.NRGBA{0, 0, 0, 255})
 
 		// Inner fill
+		inner := color.NRGBA{0, 255, 0, 255}
 		if o.trigger != nil && o.trigger.Enabled.Load() {
-			dc.SetColor(color.NRGBA{255, 0, 0, 255})
-		} else {
-			dc.SetColor(color.NRGBA{0, 255, 0, 255})
+			inner = color.NRGBA{255, 0, 0, 255}
 		}
 
-		dc.SetLineWidth(2)
-		dc.DrawLine(cx-20, cy, cx+20, cy)
-		dc.Stroke()
-		dc.DrawLine(cx, cy-20, cx, cy+20)
-		dc.Stroke()
+		dc.DrawLine(cx-20, cy, cx+20, cy, 2, inner)
+		dc.DrawLine(cx, cy-20, cx, cy+20, 2, inner)
 
-		// Flip the write index so Moonlight picks up the
-		// buffer we just rendered into. No copy needed.
-		shm.Flip()
+		// Publish the completed frame so Moonlight can
+		// pick it up on its next read cycle.
+		shm.Publish(writeIdx)
 
 		//--------------------------------------------------------------------//
 
@@ -221,8 +204,17 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 		// existing mmap stays valid but the data goes stale.
 		if time.Since(lastCheck) > shmCheckInterval {
 			lastCheck = time.Now()
+			hb.Beat()
 
-			if shm.IsUnlinked() {
+			unlinkStart := time.Now()
+			unlinked := shm.IsUnlinked()
+			if dur := time.Since(unlinkStart); dur > 50*time.Millisecond {
+				logger.Warn("overlay unlink check slow",
+					logger.Duration("dur", dur),
+				)
+			}
+
+			if unlinked {
 				logger.Dbg("overlay segment unlinked, waiting for reconnect")
 				shm.Close()
 				shm = nil
@@ -232,15 +224,12 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 		//--------------------------------------------------------------------//
 
-		// Rate limit to target FPS
-		elapsed := time.Since(start)
-		rem := (time.Second / overlayFps) - elapsed
-		if rem > 0 {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(rem):
-			}
+		// Wait for action or camera to produce new data
+		// before rendering the next frame.
+		select {
+		case <-ctx.Done():
+			return
+		case <-o.game.GetUpdated():
 		}
 	}
 }
@@ -248,7 +237,7 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 ////////////////////////////////////////////////////////////////////////////////
 
 func (o *Overlay) renderEntities(
-	dc *gg.Context,
+	dc *Canvas,
 	camera *game.CameraState,
 	action *game.ActionState,
 	width, height int,
@@ -326,9 +315,7 @@ func (o *Overlay) renderEntities(
 			if headVisible {
 				headScreen.X += vpX
 				headScreen.Y += vpY
-				dc.SetColor(color.NRGBA{50, 200, 50, 150})
-				dc.DrawCircle(headScreen.X, headScreen.Y, 3)
-				dc.Fill()
+				dc.DrawCircle(headScreen.X, headScreen.Y, 3, color.NRGBA{50, 200, 50, 150})
 			}
 		}
 	}
@@ -338,7 +325,7 @@ func (o *Overlay) renderEntities(
 ////////////////////////////////////////////////////////////////////////////////
 
 func (o *Overlay) renderSkeleton(
-	dc *gg.Context,
+	dc *Canvas,
 	entity *game.ActionEntity,
 	mvp math.Matrix4,
 	viewport math.Size,
@@ -413,21 +400,16 @@ func (o *Overlay) renderSkeleton(
 		c = color.NRGBA{255, 50, 50, 255}
 	}
 
-	dc.SetColor(c)
-	dc.SetLineWidth(6)
-
 	//----------------------------------------------------------------------------//
 
 	// Vertical spine line
 	if feetVis && headVis {
-		dc.DrawLine(pFeet.X, pFeet.Y, pHead.X, pHead.Y)
-		dc.Stroke()
+		dc.DrawLine(pFeet.X, pFeet.Y, pHead.X, pHead.Y, 3, c)
 	}
 
-	// Shoulder bar (dashed)
+	// Shoulder bar
 	if shLVis && shRVis {
-		dc.DrawLine(pShL.X, pShL.Y, pShR.X, pShR.Y)
-		dc.Stroke()
+		dc.DrawLine(pShL.X, pShL.Y, pShR.X, pShR.Y, 3, c)
 	}
 
 	// View direction line from head
@@ -446,8 +428,7 @@ func (o *Overlay) renderSkeleton(
 		if lookVis {
 			pLook.X += vpX
 			pLook.Y += vpY
-			dc.DrawLine(pHead.X, pHead.Y, pLook.X, pLook.Y)
-			dc.Stroke()
+			dc.DrawLine(pHead.X, pHead.Y, pLook.X, pLook.Y, 3, c)
 		}
 	}
 

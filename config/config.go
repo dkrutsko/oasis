@@ -26,6 +26,18 @@ type Config struct {
 
 	// Starts a pprof HTTP server on localhost:6060 for profiling.
 	Pprof bool
+
+	// FPGA device index for action/entity reads.
+	Action int
+
+	// FPGA device index for camera reads.
+	Camera int
+
+	// Target frame rate for action reads (Hz).
+	RateAction int
+
+	// Target frame rate for camera reads (Hz).
+	RateCamera int
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -67,6 +79,13 @@ func LoadConfig() (*Config, error) {
 	flagSet.BoolVar(&result.Debug, "debug", false, "")
 	flagSet.BoolVar(&result.Viewer, "viewer", false, "")
 	flagSet.BoolVar(&result.Pprof, "pprof", false, "")
+	flagSet.IntVar(&result.Action, "action", 0, "")
+	flagSet.IntVar(&result.Camera, "camera", 0, "")
+
+	var rateBoth int
+	flagSet.IntVar(&rateBoth, "rate", 0, "")
+	flagSet.IntVar(&result.RateAction, "rate-action", 60, "")
+	flagSet.IntVar(&result.RateCamera, "rate-camera", 90, "")
 
 	// Use custom output for usage
 	flagSet.Usage = Usage
@@ -84,6 +103,12 @@ func LoadConfig() (*Config, error) {
 	if result.Version {
 		configInstance = result
 		return result, nil
+	}
+
+	// --rate overrides both if specified
+	if rateBoth > 0 {
+		result.RateAction = rateBoth
+		result.RateCamera = rateBoth
 	}
 
 	//----------------------------------------------------------------------------//

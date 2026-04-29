@@ -148,57 +148,27 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
-	l := leech.New(&leech.Options{
-		Args: []string{
-			"-device", "fpga",
+	// Create FPGA leech instances. When --action and --camera
+	// point to the same device index, a single leech is shared.
+	// When they differ, each gets its own leech on a separate
+	// USB bus so reads never contend.
+	// LeechCore FPGA device string with devindex parameter
+	// for addressing specific FTDI FT601 devices.
+	actionDevice := fmt.Sprintf("fpga://devindex=%d", cfg.Action)
+	cameraDevice := fmt.Sprintf("fpga://devindex=%d", cfg.Camera)
 
-			// Disable all background refresh threads. We
-			// manage our own read cache and process scanner,
-			// so automatic TLB walks and process enumeration
-			// just cause DMA stalls. Refreshes are triggered
-			// manually when the scanner needs them.
-			"-norefresh",
-		},
-	})
+	l := createLeech(actionDevice, nil)
+	logger.Info("action using fpga device", logger.Int("devindex", cfg.Action))
 
-	err := l.Create()
-	if err != nil {
-		logger.Err(
-			"failed to create leechcore",
-			logger.Error("error", err),
-		)
-		os.Exit(int(exitCodeCreateLeech))
-	}
-
-	// Tune FPGA device and VMM settings for low-latency
-	// repeated reads of the same process.
-	for _, opt := range []struct {
-		name   string
-		option uint64
-		value  uint64
-	}{
-		// Disable paging - we don't need page fault resolution
-		{"paging_enabled", leech.ConfigPagingEnabled, 0},
-
-		// Enable read retries at the device level. With bone
-		// data adding more scatter passes per frame, transient
-		// USB errors are more likely. A single retry is cheaper
-		// than the timeout/abandon/recovery cycle.
-		{"fpga_retry_on_error", leech.ConfigFpgaRetryOnError, 1},
-
-		// FPGA read delay - how long LeechCore waits between
-		// sending a TLP and reading the USB response buffer.
-		// Default is 300-400us. Use 200us as a balance between
-		// latency and reliability with the larger per-frame
-		// read workload.
-		{"fpga_delay_read", leech.ConfigFpgaDelayRead, 200},
-	} {
-		if err := l.SetConfig(opt.option, opt.value); err != nil {
-			logger.Warn("failed to set leech config",
-				logger.String("name", opt.name),
-				logger.Error("error", err),
-			)
-		}
+	var l2 *leech.Leech
+	if cfg.Action != cfg.Camera {
+		// The secondary FPGA may have a limited PCIe memory
+		// view and fail to auto-detect the DTB. Pass the DTB
+		// discovered by the primary FPGA so it can initialize.
+		l2 = createLeech(cameraDevice, l)
+		logger.Info("camera using fpga device", logger.Int("devindex", cfg.Camera))
+	} else {
+		logger.Info("camera using fpga device", logger.Int("devindex", cfg.Action))
 	}
 
 	//----------------------------------------------------------------------------//
@@ -214,13 +184,16 @@ func main() {
 
 	g := game.New(
 		&game.Options{
-			Group: group,
-			Gctx:  gctx,
-			Leech: l,
+			Group:       group,
+			Gctx:        gctx,
+			Leech:       l,
+			CameraLeech: l2,
+			RateAction:  cfg.RateAction,
+			RateCamera:  cfg.RateCamera,
 		},
 	)
 
-	err = g.Create()
+	err := g.Create()
 	if err != nil {
 		logger.Err(
 			"failed to create game",
@@ -274,8 +247,6 @@ func main() {
 				return nil
 			}
 
-			start := time.Now()
-
 			// Toggle trigger based on middle mouse hold state
 			trigger.Enabled.Store(keys.IsMouseDown(input.KeysMouseMiddle))
 
@@ -293,16 +264,12 @@ func main() {
 				inp.MouseRelease(input.ButtonLeft)
 			}
 
-			// Rate limit to 120 FPS like the action updater
-			elapsed := time.Since(start)
-			rem := (time.Second / 120) - elapsed
-			if rem > 0 {
-				select {
-				case <-gctx.Done():
-					logger.Dbg("stopping trigger evaluator")
-					return nil
-				case <-time.After(rem):
-				}
+			// Wait for new game data before evaluating again
+			select {
+			case <-gctx.Done():
+				logger.Dbg("stopping trigger evaluator")
+				return nil
+			case <-g.GetUpdated():
 			}
 		}
 	})
@@ -326,7 +293,7 @@ func main() {
 
 	logger.Info("performing shutdown")
 
-	// Release handle
+	// Release handles
 	err = l.Close()
 	if err != nil {
 		exitCode = exitCodeCloseLeech
@@ -335,6 +302,17 @@ func main() {
 			"failed to close leechcore",
 			logger.Error("error", err),
 		)
+	}
+
+	if l2 != nil {
+		if err := l2.Close(); err != nil {
+			exitCode = exitCodeCloseLeech
+
+			logger.Err(
+				"failed to close secondary leechcore",
+				logger.Error("error", err),
+			)
+		}
 	}
 
 	//----------------------------------------------------------------------------//
@@ -347,6 +325,75 @@ func main() {
 	logger.Info("shutdown was clean")
 
 	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func createLeech(device string, primary *leech.Leech) *leech.Leech {
+
+	args := []string{
+		"-device", device,
+
+		// Disable all background refresh threads. We
+		// manage our own read cache and process scanner,
+		// so automatic TLB walks and process enumeration
+		// just cause DMA stalls. Refreshes are triggered
+		// manually when the scanner needs them.
+		"-norefresh",
+	}
+
+	// When a primary leech is provided, forward its kernel
+	// DTB so the secondary can skip the auto-detection scan
+	// which may fail if the FPGA has a limited memory view.
+	if primary != nil {
+		dtb, err := primary.GetProcessDtb(4)
+		if err != nil {
+			logger.Warn("failed to read system dtb from primary",
+				logger.Error("error", err),
+			)
+		} else {
+			args = append(args, "-dtb", fmt.Sprintf("0x%x", dtb))
+			logger.Info("forwarding dtb to secondary fpga",
+				logger.String("dtb", fmt.Sprintf("0x%x", dtb)),
+			)
+		}
+	}
+
+	l := leech.New(&leech.Options{
+		Args: args,
+	})
+
+	err := l.Create()
+	if err != nil {
+		logger.Err(
+			"failed to create leechcore",
+			logger.String("device", device),
+			logger.Error("error", err),
+		)
+		os.Exit(int(exitCodeCreateLeech))
+	}
+
+	// Tune FPGA device and VMM settings for low-latency
+	// repeated reads of the same process.
+	for _, opt := range []struct {
+		name   string
+		option uint64
+		value  uint64
+	}{
+		{"paging_enabled", leech.ConfigPagingEnabled, 0},
+		{"fpga_retry_on_error", leech.ConfigFpgaRetryOnError, 1},
+		{"fpga_delay_read", leech.ConfigFpgaDelayRead, 200},
+	} {
+		if err := l.SetConfig(opt.option, opt.value); err != nil {
+			logger.Warn("failed to set leech config",
+				logger.String("name", opt.name),
+				logger.String("device", device),
+				logger.Error("error", err),
+			)
+		}
+	}
+
+	return l
 }
 
 ////////////////////////////////////////////////////////////////////////////////

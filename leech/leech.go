@@ -266,6 +266,58 @@ func (l *Leech) SetConfig(option uint64, value uint64) error {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetProcessDtb retrieves the directory table base (CR3) for
+// the process identified by `pid`. This is used to pass the
+// kernel DTB from one VMM instance to another via the `-dtb`
+// argument.
+func (l *Leech) GetProcessDtb(pid uint32) (uint64, error) {
+
+	//----------------------------------------------------------------------------//
+
+	l.lock.RLock()
+	defer l.lock.RUnlock()
+
+	if l.handle == 0 {
+		return 0, errors.New("leech not initialized")
+	}
+
+	//----------------------------------------------------------------------------//
+
+	process := vmmProcessInformation{
+		magic:   vmmProcessInformationMagic,
+		version: vmmProcessInformationVersion,
+	}
+
+	size := unsafe.Sizeof(vmmProcessInformation{})
+
+	success, err := vmmCall(
+		vmmDll.processGetInformation,
+		l.handle,
+		uintptr(pid),
+		uintptr(unsafe.Pointer(&process)),
+		uintptr(unsafe.Pointer(&size)),
+	)
+	if err != nil {
+		return 0, errors.New(
+			"failed to get process dtb",
+			errors.Uint32("pid", pid),
+			errors.Error("error", err),
+		)
+	}
+	if success == 0 {
+		return 0, errors.New(
+			"failed to get process dtb",
+			errors.Uint32("pid", pid),
+		)
+	}
+
+	return process.dtb, nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // GetProcess retrieves information about a single process
 // identified by `pid`. Returns an error if the handle is not
 // initialized, the PID is not found, or the VMMDLL response
