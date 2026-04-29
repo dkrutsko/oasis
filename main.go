@@ -9,6 +9,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -20,7 +21,19 @@ import (
 	"github.com/dkrutsko/oasis/leech"
 	"github.com/dkrutsko/oasis/logger"
 	"github.com/dkrutsko/oasis/overlay"
+	"github.com/dkrutsko/oasis/viewer3d"
 )
+
+////////////////////////////////////////////////////////////////////////////////
+
+func init() {
+
+	// Lock the main goroutine to the OS main thread. macOS
+	// requires Cocoa (and therefore GLFW) operations to run
+	// on thread 0. This is harmless when --viewer3d is not
+	// used.
+	runtime.LockOSThread()
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -279,8 +292,29 @@ func main() {
 
 	exitCode := exitCodeSuccess
 
-	// Await shutdown
-	err = group.Wait()
+	// When the 3D viewer is active, run its GLFW loop on the
+	// main goroutine (required by macOS) and wait for the
+	// errgroup in the background. Otherwise use the normal
+	// blocking wait.
+	if cfg.Viewer3d {
+		v3d := viewer3d.NewViewer3d(g, keys)
+
+		errCh := make(chan error, 1)
+		go func() { errCh <- group.Wait() }()
+
+		if vErr := v3d.Run(gctx); vErr != nil {
+			logger.Err("failed to run 3d viewer",
+				logger.Error("error", vErr),
+			)
+		}
+		v3d.Close()
+
+		cancel()
+		err = <-errCh
+	} else {
+		err = group.Wait()
+	}
+
 	if err != nil {
 		exitCode = exitCodeDaemonError
 

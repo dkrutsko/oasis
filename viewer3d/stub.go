@@ -1,0 +1,29 @@
+//go:build !viewer3d
+
+package viewer3d
+
+import (
+	"context"
+
+	"github.com/dkrutsko/oasis/game"
+	"github.com/dkrutsko/oasis/input"
+)
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Viewer3d is a stub when building without the viewer3d
+// tag. Build with -tags viewer3d and CGO_ENABLED=0 to
+// enable the GoGPU-based 3D viewer.
+type Viewer3d struct{}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func NewViewer3d(_ *game.Game, _ *input.Keys) *Viewer3d { return &Viewer3d{} }
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v *Viewer3d) Run(_ context.Context) error { return nil }
+
+////////////////////////////////////////////////////////////////////////////////
+
+func (v *Viewer3d) Close() {}

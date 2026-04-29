@@ -34,6 +34,9 @@ ARGUMENTS
 	-pprof (false) - boolean
 	 Start a pprof HTTP server on localhost:6060 for profiling.
 
+	-viewer3d (false) - boolean
+	 Launch the 3D map viewer to visualize collision geometry and entities.
+
 	-maps ("") - string
 	 Directory containing .tri map collision files for line-of-sight checks.
 `,

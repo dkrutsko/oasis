@@ -27,6 +27,9 @@ type Config struct {
 	// Starts a pprof HTTP server on localhost:6060 for profiling.
 	Pprof bool
 
+	// Launches the 3D map viewer window.
+	Viewer3d bool
+
 	// FPGA device index for action/entity reads.
 	Action int
 
@@ -83,6 +86,7 @@ func LoadConfig() (*Config, error) {
 	flagSet.BoolVar(&result.Debug, "debug", false, "")
 	flagSet.BoolVar(&result.Viewer, "viewer", false, "")
 	flagSet.BoolVar(&result.Pprof, "pprof", false, "")
+	flagSet.BoolVar(&result.Viewer3d, "viewer3d", false, "")
 	flagSet.IntVar(&result.Action, "action", 0, "")
 	flagSet.IntVar(&result.Camera, "camera", 0, "")
 	flagSet.StringVar(&result.Maps, "maps", "", "")

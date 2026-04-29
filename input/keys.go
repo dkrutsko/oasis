@@ -23,10 +23,11 @@ const (
 
 	// Layout of the shared memory region:
 	// Offset  0: version   uint32 (protocol version, must be 1)
-	// Offset  4: reserved  uint32
+	// Offset  4: scrollY   int32  (accumulated scroll ticks, atomic)
 	// Offset  8: keyboard  [32]byte (256-bit bitfield)
 	// Offset 40: mouse     uint8 (bit 0=left, 1=mid, 2=right, 3=x1, 4=x2)
 	keysVersion      = 1
+	keysScrollOffset = 4
 	keysHeaderSize   = 8
 	keysKeyboardSize = 32
 	keysMouseOffset  = keysHeaderSize + keysKeyboardSize
@@ -50,8 +51,9 @@ const (
 // memory segment written by Moonlight. The connection is
 // managed lazily and reconnects automatically.
 type Keys struct {
-	seg *shm.Segment
-	mu  sync.RWMutex
+	seg       *shm.Segment
+	mu        sync.RWMutex
+	lastScroll int32
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -90,6 +92,37 @@ func (k *Keys) Close() error {
 	}
 
 	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetScrollDelta reads the scroll accumulator at offset
+// 4 in the shared memory and returns the change since the
+// last call. Moonlight writes a cumulative scroll counter.
+// The segment is read-only so we track the delta ourselves
+// rather than resetting the value.
+func (k *Keys) GetScrollDelta() int32 {
+
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+
+	if k.seg == nil {
+		return 0
+	}
+
+	data := k.seg.GetData()
+	if len(data) < keysHeaderSize {
+		return 0
+	}
+
+	val := int32(data[keysScrollOffset]) |
+		int32(data[keysScrollOffset+1])<<8 |
+		int32(data[keysScrollOffset+2])<<16 |
+		int32(data[keysScrollOffset+3])<<24
+
+	delta := val - k.lastScroll
+	k.lastScroll = val
+	return delta
 }
 
 ////////////////////////////////////////////////////////////////////////////////

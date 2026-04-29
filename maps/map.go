@@ -98,6 +98,51 @@ func Load(dir, name string) (*Map, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetTriangles returns a flat slice of all triangles in
+// the map by walking the BVH leaf nodes.
+func (m *Map) GetTriangles() []Triangle {
+
+	if m == nil || m.Root == nil {
+		return nil
+	}
+
+	result := make([]Triangle, 0, m.Triangles)
+	collectTriangles(m.Root, &result)
+	return result
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Trace returns the distance along the ray to the nearest
+// triangle intersection within maxDist. Returns (0, false)
+// when there is no hit.
+func (m *Map) Trace(ray geometry.Ray, maxDist float64) (float64, bool) {
+
+	if m == nil || m.Root == nil {
+		return 0, false
+	}
+
+	dist := traceNearest(m.Root, ray, maxDist)
+	if dist >= maxDist {
+		return 0, false
+	}
+	return dist, true
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetBounds returns the map's axis-aligned bounding box.
+// Returns a zero box when the map is nil or has no geometry.
+func (m *Map) GetBounds() geometry.Box {
+
+	if m == nil || m.Root == nil {
+		return geometry.BoxZero
+	}
+	return m.Root.Box
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // IsVisible returns true if the line segment from `from`
 // to `to` does not intersect any triangle in the map
 // collision geometry. Returns true when the map is nil
@@ -112,6 +157,35 @@ func (m *Map) IsVisible(from, to math.Vector3) bool {
 	maxDist := from.Distance(to)
 
 	return !intersects(m.Root, ray, maxDist)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func traceNearest(node *BVHNode, ray geometry.Ray, best float64) float64 {
+
+	if node == nil {
+		return best
+	}
+
+	_, hit := ray.IntersectBox(node.Box)
+	if !hit {
+		return best
+	}
+
+	if node.Triangles != nil {
+		for i := range node.Triangles {
+			tri := &node.Triangles[i]
+			d, ok := ray.IntersectTriangle(tri.V0, tri.V1, tri.V2)
+			if ok && d > 0 && d < best {
+				best = d
+			}
+		}
+		return best
+	}
+
+	best = traceNearest(node.Left, ray, best)
+	best = traceNearest(node.Right, ray, best)
+	return best
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -145,6 +219,23 @@ func intersects(node *BVHNode, ray geometry.Ray, maxDist float64) bool {
 		return true
 	}
 	return intersects(node.Right, ray, maxDist)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func collectTriangles(node *BVHNode, result *[]Triangle) {
+
+	if node == nil {
+		return
+	}
+
+	if node.Triangles != nil {
+		*result = append(*result, node.Triangles...)
+		return
+	}
+
+	collectTriangles(node.Left, result)
+	collectTriangles(node.Right, result)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
