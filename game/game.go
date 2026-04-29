@@ -13,6 +13,7 @@ import (
 
 	"github.com/dkrutsko/oasis/leech"
 	"github.com/dkrutsko/oasis/logger"
+	"github.com/dkrutsko/oasis/maps"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -31,6 +32,10 @@ type Options struct {
 	// Zero or negative means uncapped.
 	RateAction int
 	RateCamera int
+
+	// Directory containing .tri map collision files.
+	// When empty, line-of-sight checks are disabled.
+	Maps string
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -46,6 +51,8 @@ type Game struct {
 	camera       *CameraState
 	trigger      *Trigger
 	health       *HealthMonitor
+	currentMap   *maps.Map
+	mapName      string
 
 	// Signals the action updater to pause while the
 	// scanner is using the primary FPGA.
@@ -60,9 +67,10 @@ type Game struct {
 	strCache      map[string]string
 	intCache      map[string]uintptr
 	cacheLock     sync.Mutex
-	lastEntityLog      time.Time
-	lastTlbRefresh     time.Time
+	lastEntityLog        time.Time
+	lastTlbRefresh       time.Time
 	lastCameraTlbRefresh time.Time
+	lastMapCheck         time.Time
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -120,6 +128,12 @@ func (g *Game) GetHealthMonitor() *HealthMonitor {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+func (g *Game) GetCurrentMap() *maps.Map {
+	return g.currentMap
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // Updated returns a channel that receives a signal whenever
 // action or camera state is updated. The overlay should
 // listen on this to render only when new data is available.
@@ -138,6 +152,69 @@ func (g *Game) notifyUpdated() {
 	case g.updated <- struct{}{}:
 	default:
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// checkMapChange reads the current map name from game
+// memory and reloads collision data when the map changes.
+func (g *Game) checkMapChange(memory *leech.Memory, client uintptr) {
+
+	//----------------------------------------------------------------------------//
+
+	offGlobalVars, ok := g.GetOffsetsInt("offsets", "client.dll", "dwGlobalVars")
+	if !ok {
+		return
+	}
+
+	globalVars, err := memory.ReadPtr(client + offGlobalVars)
+	if err != nil || globalVars == 0 {
+		return
+	}
+
+	// current_map_name is at offset 0x188 in CGlobalVarsBase.
+	// It is a pointer to a null-terminated C string containing
+	// just the map name (e.g. "de_dust2").
+	mapNamePtr, err := memory.ReadPtr(globalVars + 0x188)
+	if err != nil || mapNamePtr == 0 {
+		return
+	}
+
+	mapName, err := memory.ReadString(mapNamePtr, 64)
+	if err != nil || mapName == "" {
+		return
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// No change
+	if mapName == g.mapName {
+		return
+	}
+
+	g.mapName = mapName
+	logger.Info("map changed", logger.String("map", mapName))
+
+	// Only load collision data when a maps directory is configured
+	if g.options.Maps == "" {
+		g.currentMap = nil
+		return
+	}
+
+	// Try to load collision data for this map
+	m, err := maps.Load(g.options.Maps, mapName)
+	if err != nil {
+		logger.Warn("failed to load map collision data",
+			logger.String("map", mapName),
+			logger.Error("error", err),
+		)
+		g.currentMap = nil
+		return
+	}
+
+	g.currentMap = m
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////

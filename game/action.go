@@ -135,6 +135,12 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		g.options.Leech.SetConfig(leech.ConfigRefreshFreqTlb, 1)
 	}
 
+	// Check for map changes (throttled to once per second)
+	if now.Sub(g.lastMapCheck) >= time.Second {
+		g.lastMapCheck = now
+		g.checkMapChange(memory, client)
+	}
+
 	//----------------------------------------------------------------------------//
 
 	// Get module-level offsets

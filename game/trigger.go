@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dkrutsko/oasis/geometry"
+	"github.com/dkrutsko/oasis/maps"
 	"github.com/dkrutsko/oasis/math"
 )
 
@@ -62,7 +63,7 @@ func NewTrigger() *Trigger {
 // Evaluate tests whether the local player's aim direction
 // intersects any enemy bone hitbox. Returns a result
 // indicating whether to fire and which entity was hit.
-func (t *Trigger) Evaluate(action *ActionState) TriggerResult {
+func (t *Trigger) Evaluate(action *ActionState, m *maps.Map) TriggerResult {
 
 	//----------------------------------------------------------------------------//
 
@@ -166,6 +167,19 @@ func (t *Trigger) Evaluate(action *ActionState) TriggerResult {
 				best.Bone = BoneNeck
 				best.Dist = dist
 			}
+		}
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Verify line of sight through map geometry. If a
+	// wall blocks the path to the hit point, suppress
+	// the trigger to avoid firing through walls.
+	if best.Active && m != nil {
+		hitPoint := ray.GetPoint(best.Dist)
+		if !m.IsVisible(eyePos, hitPoint) {
+			best.Active = false
+			best.Target = nil
 		}
 	}
 

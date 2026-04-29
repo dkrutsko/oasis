@@ -190,6 +190,7 @@ func main() {
 			CameraLeech: l2,
 			RateAction:  cfg.RateAction,
 			RateCamera:  cfg.RateCamera,
+			Maps:        cfg.Maps,
 		},
 	)
 
@@ -251,7 +252,7 @@ func main() {
 			trigger.Enabled.Store(keys.IsMouseDown(input.KeysMouseMiddle))
 
 			action := g.GetActionState()
-			result := trigger.Evaluate(action)
+			result := trigger.Evaluate(action, g.GetCurrentMap())
 
 			if result.Active && inp.IsConnected() {
 				logger.Dbg("trigger fired",

@@ -33,6 +33,9 @@ ARGUMENTS
 
 	-pprof (false) - boolean
 	 Start a pprof HTTP server on localhost:6060 for profiling.
+
+	-maps ("") - string
+	 Directory containing .tri map collision files for line-of-sight checks.
 `,
 	)
 }
