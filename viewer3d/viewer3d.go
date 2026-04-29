@@ -126,9 +126,11 @@ func (v *Viewer3d) Run(ctx context.Context) error {
 
 			v.camera.UpdateAuto(mx, my, leftDown)
 
-			// WASD exits auto mode, keeping current position
+			// WASD or mouse drag exits auto mode
 			if kb.Pressed(ginput.KeyW) || kb.Pressed(ginput.KeyA) ||
-				kb.Pressed(ginput.KeyS) || kb.Pressed(ginput.KeyD) {
+				kb.Pressed(ginput.KeyS) || kb.Pressed(ginput.KeyD) ||
+				mouse.Pressed(ginput.MouseButtonRight) ||
+				mouse.Pressed(ginput.MouseButtonMiddle) {
 				v.camera.auto = false
 			}
 		} else {

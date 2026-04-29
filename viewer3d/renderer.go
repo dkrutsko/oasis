@@ -47,6 +47,8 @@ type Renderer struct {
 	hudBindGroup  *wgpu.BindGroup
 	textBuf       *wgpu.Buffer
 	textVertices  uint32
+
+	lastTeam int32
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -331,19 +333,27 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 
 	//----------------------------------------------------------------------------//
 
-	if action == nil || action.Player == nil {
+	if action == nil {
 		r.entityVertices = 0
 		return
 	}
 
-	localTeam := action.Player.Team
+	var localTeam int32
+	var playerZ float64
+	hasPlayer := action.Player != nil
 
-	// Build vertex data: [x y z r g b] per vertex, 4 bytes each
+	if hasPlayer {
+		localTeam = action.Player.Team
+		playerZ = action.Player.Origin.Z
+		r.lastTeam = localTeam
+	} else {
+		localTeam = r.lastTeam
+	}
+
+	// Build vertex data: [x y z r g b a] per vertex
 	buf := make([]byte, 0, entityBufSize)
 
 	//----------------------------------------------------------------------------//
-
-	playerZ := action.Player.Origin.Z
 
 	for i := range action.Entities {
 		entity := &action.Entities[i]
@@ -352,8 +362,8 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 			continue
 		}
 
-		isPlayer := entity == action.Player
-		isEnemy := entity.Team != localTeam
+		isPlayer := hasPlayer && entity == action.Player
+		isEnemy := localTeam != 0 && entity.Team != localTeam
 
 		// Only show the local player and enemies
 		if !isPlayer && !isEnemy {
@@ -376,7 +386,7 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 		// Fade enemies based on height difference from
 		// the local player. Same floor stays opaque,
 		// then drops sharply past ~128 units (one floor).
-		if isEnemy {
+		if isEnemy && hasPlayer {
 			heightDiff := sysMath.Abs(entity.Origin.Z - playerZ)
 			t := heightDiff / 128.0
 			if t < 0.5 {
@@ -431,8 +441,8 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 	//----------------------------------------------------------------------------//
 
 	// Aim ray from the local player's eye position
-	player := action.Player
-	if player != nil {
+	if hasPlayer {
+		player := action.Player
 		var eyePos math.Vector3
 		if player.Bones.Valid && !player.Bones.Pos[game.BoneHead].IsZero() {
 			eyePos = player.Bones.Pos[game.BoneHead]

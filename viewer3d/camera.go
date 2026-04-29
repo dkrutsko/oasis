@@ -14,7 +14,7 @@ import (
 const (
 	// Distance behind and above the player in auto mode.
 	autoDistance = 1200.0
-	autoPitch   = 0.35 // ~20 degrees above horizontal
+	autoPitch   = 0.65 // ~37 degrees above horizontal
 
 	// Movement speed in free mode (units per second).
 	freeMoveSpeed = 800.0
