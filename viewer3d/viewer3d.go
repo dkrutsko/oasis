@@ -97,14 +97,14 @@ func (v *Viewer3d) Run(ctx context.Context) error {
 			}
 			v.ready = true
 
-			w := dc.FramebufferWidth()
-			h := dc.FramebufferHeight()
-			v.camera.SetViewport(w, h)
-
 			logger.Info("3d viewer started",
 				logger.String("backend", dc.Backend()),
 			)
 		}
+
+		// Update viewport on every frame so the projection
+		// matrix stays correct after window resizes.
+		v.camera.SetViewport(dc.FramebufferWidth(), dc.FramebufferHeight())
 
 		//--------------------------------------------------------------------//
 

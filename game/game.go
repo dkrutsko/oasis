@@ -181,7 +181,7 @@ func (g *Game) checkMapChange(memory *leech.Memory, client uintptr) {
 	}
 
 	mapName, err := memory.ReadString(mapNamePtr, 64)
-	if err != nil || mapName == "" {
+	if err != nil || mapName == "" || mapName == "<empty>" {
 		return
 	}
 
