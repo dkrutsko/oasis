@@ -7,6 +7,7 @@ require (
 	github.com/ebitengine/purego v0.10.0
 	github.com/fatih/color v1.19.0
 	github.com/gogpu/gogpu v0.30.0
+	github.com/gogpu/gpucontext v0.15.0
 	github.com/gogpu/gputypes v0.5.0
 	github.com/gogpu/wgpu v0.26.8
 	github.com/hajimehoshi/ebiten/v2 v2.9.9
@@ -19,7 +20,6 @@ require (
 	github.com/ebitengine/hideconsole v1.0.0 // indirect
 	github.com/go-webgpu/goffi v0.5.0 // indirect
 	github.com/go-webgpu/webgpu v0.4.3 // indirect
-	github.com/gogpu/gpucontext v0.15.0 // indirect
 	github.com/gogpu/naga v0.17.6 // indirect
 	github.com/jezek/xgb v1.1.1 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect

@@ -63,10 +63,10 @@ type Game struct {
 	// new data is available.
 	updated chan struct{}
 
-	offsets       map[string][]byte
-	strCache      map[string]string
-	intCache      map[string]uintptr
-	cacheLock     sync.Mutex
+	offsets              map[string][]byte
+	strCache             map[string]string
+	intCache             map[string]uintptr
+	cacheLock            sync.Mutex
 	lastEntityLog        time.Time
 	lastTlbRefresh       time.Time
 	lastCameraTlbRefresh time.Time

@@ -51,8 +51,8 @@ const (
 // memory segment written by Moonlight. The connection is
 // managed lazily and reconnects automatically.
 type Keys struct {
-	seg       *shm.Segment
-	mu        sync.RWMutex
+	seg        *shm.Segment
+	mu         sync.RWMutex
 	lastScroll int32
 }
 
