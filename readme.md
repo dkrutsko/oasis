@@ -34,13 +34,13 @@ Oasis is a real-time game assistance tool that uses FPGA-based DMA (Direct Memor
 
 ## Getting Started
 
-## Building
-
 - Use this [modified version](https://github.com/dkrutsko/moonlight-qt) of Moonlight streaming software to stream the game.
 - Download memory offsets using `./dump.sh` or by downloading `offsets.json` and `client_dll.json` from [this repository](https://github.com/a2x/cs2-dumper).
 - Download [pcieleech](https://github.com/ufrisk/pcileech/releases/tag/v4.19) for the operating system you're planning on running this software.
 - Use [CS2-Phys-Extractor](https://github.com/itzlaith/cs2-phys-extractor) to extract and convert maps into `.tri` files for `--maps` to work.
 - Run `./patch.sh` on MacOS to fix a bug with `gogpu`, optional but you'll get an annoying key press sound if you don't.
+
+## Building
 
 ```
 # Run from source code
