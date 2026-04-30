@@ -47,21 +47,6 @@ func (s *Splash) Format(useColor bool) string {
 
 	var out bytes.Buffer
 
-	out.WriteString(yellow.Sprint("                                                              \n"))
-	out.WriteString(yellow.Sprint("  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  \n"))
-	out.WriteString(yellow.Sprint("                                                              \n"))
-	out.WriteString(yellow.Sprint("      ███████      █████████    █████████  █████  █████████   \n"))
-	out.WriteString(yellow.Sprint("    ███░░░░░███   ███░░░░░███  ███░░░░░███░░███  ███░░░░░███  \n"))
-	out.WriteString(yellow.Sprint("   ███     ░░███ ░███    ░███ ░███    ░░░  ░███ ░███    ░░░   \n"))
-	out.WriteString(yellow.Sprint("  ░███      ░███ ░███████████ ░░█████████  ░███ ░░█████████   \n"))
-	out.WriteString(yellow.Sprint("  ░███      ░███ ░███░░░░░███  ░░░░░░░░███ ░███  ░░░░░░░░███  \n"))
-	out.WriteString(yellow.Sprint("  ░░███     ███  ░███    ░███  ███    ░███ ░███  ███    ░███  \n"))
-	out.WriteString(yellow.Sprint("   ░░░███████░   █████   █████░░█████████  █████░░█████████   \n"))
-	out.WriteString(yellow.Sprint("     ░░░░░░░    ░░░░░   ░░░░░  ░░░░░░░░░  ░░░░░  ░░░░░░░░░    \n"))
-	out.WriteString(yellow.Sprint("                                                              \n"))
-	out.WriteString(yellow.Sprint("  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  \n"))
-	out.WriteString(yellow.Sprint("                                                              \n"))
-
 	out.WriteString(whiteL.Sprintf("  Version: "))
 	out.WriteString(whiteB.Sprintf("%s\n", s.version))
 
