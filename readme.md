@@ -2,6 +2,8 @@
 
 # Oasis
 
+![demo](demo.jpg)
+
 Oasis is a real-time game assistance tool that uses FPGA-based DMA (Direct Memory Access) to read game memory, analyze player positions and skeletal data, and provide intelligent triggerbot and overlay functionality. It integrates hardware-level memory reading with 3D spatial geometry calculations and input synthesis via shared memory.
 
 ## Features
