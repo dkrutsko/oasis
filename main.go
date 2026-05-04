@@ -161,27 +161,47 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
-	// Create FPGA leech instances. When --action and --camera
-	// point to the same device index, a single leech is shared.
-	// When they differ, each gets its own leech on a separate
-	// USB bus so reads never contend.
-	// LeechCore FPGA device string with devindex parameter
-	// for addressing specific FTDI FT601 devices.
-	actionDevice := fmt.Sprintf("fpga://devindex=%d", cfg.Action)
-	cameraDevice := fmt.Sprintf("fpga://devindex=%d", cfg.Camera)
+	// Create FPGA leech instances. When both --action and
+	// --camera are provided with different indices, each
+	// gets its own leech. When only one is provided, both
+	// share it. When neither is provided, use the default.
+	actionIdx := cfg.Action
+	cameraIdx := cfg.Camera
+
+	if actionIdx < 0 && cameraIdx < 0 {
+		// Neither specified, use default
+		actionIdx = -1
+		cameraIdx = -1
+	} else if actionIdx < 0 {
+		// Only camera specified, action uses same
+		actionIdx = cameraIdx
+	} else if cameraIdx < 0 {
+		// Only action specified, camera uses same
+		cameraIdx = actionIdx
+	}
+
+	actionDevice := "fpga"
+	if actionIdx >= 0 {
+		actionDevice = fmt.Sprintf("fpga://devindex=%d", actionIdx)
+	}
+
+	cameraDevice := "fpga"
+	if cameraIdx >= 0 {
+		cameraDevice = fmt.Sprintf("fpga://devindex=%d", cameraIdx)
+	}
 
 	l := createLeech(actionDevice, nil)
-	logger.Info("action using fpga device", logger.Int("devindex", cfg.Action))
+	logger.Info("action using fpga device", logger.String("device", actionDevice))
 
 	var l2 *leech.Leech
-	if cfg.Action != cfg.Camera {
+	if actionIdx != cameraIdx {
 		// The secondary FPGA may have a limited PCIe memory
 		// view and fail to auto-detect the DTB. Pass the DTB
 		// discovered by the primary FPGA so it can initialize.
 		l2 = createLeech(cameraDevice, l)
-		logger.Info("camera using fpga device", logger.Int("devindex", cfg.Camera))
+		logger.Info("camera using fpga device", logger.String("device", cameraDevice))
 	} else {
-		logger.Info("camera using fpga device", logger.Int("devindex", cfg.Action))
+		logger.Info("camera using fpga device", logger.String("device", actionDevice))
 	}
 
 	//----------------------------------------------------------------------------//

@@ -87,8 +87,8 @@ func LoadConfig() (*Config, error) {
 	flagSet.BoolVar(&result.Viewer, "viewer", false, "")
 	flagSet.BoolVar(&result.Pprof, "pprof", false, "")
 	flagSet.BoolVar(&result.Viewer3d, "viewer3d", false, "")
-	flagSet.IntVar(&result.Action, "action", 0, "")
-	flagSet.IntVar(&result.Camera, "camera", 0, "")
+	flagSet.IntVar(&result.Action, "action", -1, "")
+	flagSet.IntVar(&result.Camera, "camera", -1, "")
 	flagSet.StringVar(&result.Maps, "maps", "", "")
 
 	var rateBoth int
