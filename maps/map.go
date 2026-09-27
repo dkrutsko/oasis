@@ -2,10 +2,13 @@ package maps
 
 import (
 	"encoding/binary"
+	"io/fs"
 	sysMath "math"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/dkrutsko/oasis/errors"
 	"github.com/dkrutsko/oasis/geometry"
@@ -36,21 +39,17 @@ type Map struct {
 // Load reads a .tri file from the given directory and
 // builds a BVH for fast ray intersection queries. The
 // .tri format is a flat array of packed float32 triplets
-// with no header (36 bytes per triangle).
+// with no header (36 bytes per triangle). A zstd
+// compressed .tri.zst file is used when one exists.
 func Load(dir, name string) (*Map, error) {
 
 	//----------------------------------------------------------------------------//
 
-	path := filepath.Join(dir, name+".tri")
 	start := time.Now()
 
-	data, err := os.ReadFile(path)
+	data, path, err := readTriFile(dir, name)
 	if err != nil {
-		return nil, errors.New(
-			"failed to read tri file",
-			errors.String("path", path),
-			errors.Error("error", err),
-		)
+		return nil, err
 	}
 
 	if len(data) < triSize {
@@ -94,6 +93,7 @@ func Load(dir, name string) (*Map, error) {
 
 	logger.Info("loaded map collision data",
 		logger.String("name", name),
+		logger.String("path", path),
 		logger.Int("triangles", count),
 		logger.Duration("elapsed", time.Since(start)),
 	)
@@ -105,6 +105,70 @@ func Load(dir, name string) (*Map, error) {
 	}, nil
 
 	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readTriFile returns the contents of a map's .tri file and
+// its path. The compressed .tri.zst file that `extract.sh`
+// writes is preferred over an uncompressed .tri file.
+func readTriFile(dir, name string) ([]byte, string, error) {
+
+	//----------------------------------------------------------------------------//
+
+	path := filepath.Join(dir, name+".tri.zst")
+
+	compressed, err := os.ReadFile(path)
+	if err == nil {
+		data, err := decompressTriFile(compressed)
+		if err != nil {
+			return nil, path, errors.New(
+				"failed to decompress tri file",
+				errors.String("path", path),
+				errors.Error("error", err),
+			)
+		}
+
+		return data, path, nil
+	}
+
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, path, errors.New(
+			"failed to read tri file",
+			errors.String("path", path),
+			errors.Error("error", err),
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	path = filepath.Join(dir, name+".tri")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, path, errors.New(
+			"failed to read tri file",
+			errors.String("path", path),
+			errors.Error("error", err),
+		)
+	}
+
+	return data, path, nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func decompressTriFile(compressed []byte) ([]byte, error) {
+
+	decoder, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1))
+	if err != nil {
+		return nil, err
+	}
+	defer decoder.Close()
+
+	return decoder.DecodeAll(compressed, nil)
 }
 
 ////////////////////////////////////////////////////////////////////////////////

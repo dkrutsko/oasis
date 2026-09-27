@@ -42,8 +42,9 @@ type Config struct {
 	// Target frame rate for camera reads (Hz).
 	RateCamera int
 
-	// Directory containing .tri map collision files.
-	// When empty, line-of-sight checks are disabled.
+	// Directory containing .tri and .tri.zst map collision
+	// files, ./maps by default. When empty, line-of-sight
+	// checks are disabled.
 	Maps string
 }
 
@@ -89,7 +90,7 @@ func LoadConfig() (*Config, error) {
 	flagSet.BoolVar(&result.Viewer3d, "viewer3d", false, "")
 	flagSet.IntVar(&result.Action, "action", -1, "")
 	flagSet.IntVar(&result.Camera, "camera", -1, "")
-	flagSet.StringVar(&result.Maps, "maps", "", "")
+	flagSet.StringVar(&result.Maps, "maps", "./maps", "")
 
 	var rateBoth int
 	flagSet.IntVar(&rateBoth, "rate", 0, "")

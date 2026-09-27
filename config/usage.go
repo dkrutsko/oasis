@@ -37,8 +37,9 @@ ARGUMENTS
 	-viewer3d (false) - boolean
 	 Launch the 3D map viewer to visualize collision geometry and entities.
 
-	-maps ("") - string
-	 Directory containing .tri map collision files for line-of-sight checks.
+	-maps ("./maps") - string
+	 Directory containing .tri or .tri.zst map collision files for
+	 line-of-sight checks. Pass an empty value to disable them.
 `,
 	)
 }

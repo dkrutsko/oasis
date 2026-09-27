@@ -12,12 +12,12 @@ set -euo pipefail
 
 # Ensure that all the files have the correct permissions
 printf -- "\n\e[1;32mNormalizing file permissions\e[0m\n"
-find . -type f ! -ipath "./.git*/*" -exec chmod 644 {} \;
-find . -type f   -iname "*.sh"      -exec chmod 755 {} \;
+find . -type f ! -ipath "./.git*/*" ! -path "./vendor/*" -exec chmod 644 {} \;
+find . -type f   -iname "*.sh"      ! -path "./vendor/*" -exec chmod 755 {} \;
 
 # Perform linting on every script in the project
 printf -- "\n\e[1;32mLinting all scripts\e[0m\n"
-find . -type f -iname "*.sh" -exec shellcheck {} +
+find . -type f -iname "*.sh" ! -path "./vendor/*" -exec shellcheck {} +
 
 ##----------------------------------------------------------------------------##
 
@@ -25,9 +25,10 @@ find . -type f -iname "*.sh" -exec shellcheck {} +
 printf -- "\n\e[1;32mTidying Go modules\e[0m\n"
 go mod tidy
 
-# Format and simplify all Go code in the project
+# Format and simplify all Go code in the project. Vendored
+# dependencies are left as their authors wrote them.
 printf -- "\n\e[1;32mFormatting Go code\e[0m\n"
-gofmt -s -w .
+find . -type f -iname "*.go" ! -path "./vendor/*" -exec gofmt -s -w {} +
 
 # Run static analysis checks on all Go packages. The unsafeptr
 # analyzer is disabled because the leech package requires the

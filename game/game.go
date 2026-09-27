@@ -33,8 +33,8 @@ type Options struct {
 	RateAction int
 	RateCamera int
 
-	// Directory containing .tri map collision files.
-	// When empty, line-of-sight checks are disabled.
+	// Directory containing .tri and .tri.zst map collision
+	// files. When empty, line-of-sight checks are disabled.
 	Maps string
 }
 
