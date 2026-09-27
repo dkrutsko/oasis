@@ -325,10 +325,11 @@ func (v *Kv3Value) GetFloat() (float64, bool) {
 
 // DecodeKv3 decodes a binary KeyValues3 block. It is a port of the
 // reading side of ValveResourceFormat's `BinaryKV3.cs` (see NOTICE)
-// and supports versions 4 and 5 with LZ4 or zstd compression, which
-// is what CS2 uses. When `keep` is not nil, only object fields with
-// those names are stored, which saves memory when the caller needs
-// a small part of a large block. Array elements are always stored.
+// and supports versions 4 and 5, uncompressed or compressed with LZ4
+// or zstd, which covers every CS2 map physics block. When `keep` is
+// not nil, only object fields with those names are stored, which
+// saves memory when the caller needs a small part of a large block.
+// Array elements are always stored.
 func DecodeKv3(data []byte, keep map[string]bool) (*Kv3Value, error) {
 
 	//----------------------------------------------------------------------------//
