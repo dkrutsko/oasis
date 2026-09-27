@@ -1,9 +1,5 @@
 package main
 
-// Conversion of decoded world physics into collision triangles. The hull
-// and mesh conversion follows CS2-Phys-Extractor (MIT License, Copyright
-// (c) 2025 LAITHCOOL). See NOTICE for the license text.
-
 import (
 	"encoding/binary"
 	sysMath "math"
@@ -92,7 +88,8 @@ type PhysicsResult struct {
 
 // ConvertPhysics turns the shapes of the default collision group
 // into triangles. Hull triangles come first, then those of the
-// meshes, spheres and capsules.
+// meshes, spheres and capsules. The hull and mesh conversion
+// follows CS2-Phys-Extractor (see NOTICE).
 func ConvertPhysics(phys *Kv3Value, emit TriangleFunc) PhysicsResult {
 
 	//----------------------------------------------------------------------------//
@@ -495,6 +492,15 @@ func decodeVertices(data []byte) ([]math.Vector3, error) {
 			return nil, err
 		}
 
+		// Maps load triangles into a BVH, where an infinite vertex
+		// would stretch the bounds of every node above it
+		if math.IsNanOrInf(vertex.X) || math.IsNanOrInf(vertex.Y) || math.IsNanOrInf(vertex.Z) {
+			return nil, errors.New(
+				"vertex is not a finite number",
+				errors.Int("vertex", i),
+			)
+		}
+
 		result[i] = vertex
 	}
 
@@ -518,9 +524,9 @@ func getVector3(value *Kv3Value) (math.Vector3, error) {
 
 	for i := range elements {
 		component, ok := elements[i].GetFloat()
-		if !ok {
+		if !ok || math.IsNanOrInf(component) {
 			return math.Vector3Zero, errors.New(
-				"vector component is not a number",
+				"vector component is not a finite number",
 				errors.Int("component", i),
 			)
 		}
@@ -537,13 +543,14 @@ func getVector3(value *Kv3Value) (math.Vector3, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// getRadius reads a radius, which must be a positive number.
+// getRadius reads a radius, which must be a finite positive
+// number.
 func getRadius(value *Kv3Value) (float64, error) {
 
 	radius, ok := value.GetFloat()
-	if !ok || radius <= 0 {
+	if !ok || math.IsNanOrInf(radius) || radius <= 0 {
 		return 0, errors.New(
-			"radius is not a positive number",
+			"radius is not a finite positive number",
 			errors.Float64("radius", radius),
 		)
 	}

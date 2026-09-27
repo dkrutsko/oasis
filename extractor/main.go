@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/klauspost/compress/zstd"
-
 	"github.com/dkrutsko/oasis/errors"
 	"github.com/dkrutsko/oasis/logger"
 )
@@ -30,7 +28,6 @@ const (
 	exitCodeReadVpk
 	exitCodeNoWorldPhysics
 	exitCodeCreateOutput
-	exitCodeCreateDecoder
 	exitCodeConvertMap
 )
 
@@ -164,17 +161,6 @@ func main() {
 		os.Exit(int(exitCodeCreateOutput))
 	}
 
-	// Version 5 KV3 blocks hold three zstd frames that are
-	// decoded at the same time
-	zd, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(3))
-	if err != nil {
-		logger.Err(
-			"failed to create zstd decoder",
-			logger.Error("error", err),
-		)
-		os.Exit(int(exitCodeCreateDecoder))
-	}
-
 	//----------------------------------------------------------------------------//
 
 	// Every map is converted even if an earlier one fails, so a
@@ -184,7 +170,7 @@ func main() {
 	for _, entry := range entries {
 		mapName := getMapName(entry)
 
-		err := convertWorldPhysics(vpk, entry, mapName, outDir, zd)
+		err := convertWorldPhysics(vpk, entry, mapName, outDir)
 		if err != nil {
 			logger.Err(
 				"failed to convert map",
@@ -195,7 +181,6 @@ func main() {
 		}
 	}
 
-	zd.Close()
 	file.Close()
 
 	if failed {
@@ -270,7 +255,6 @@ func convertWorldPhysics(
 	entry *VpkEntry,
 	mapName string,
 	outDir string,
-	zd *zstd.Decoder,
 ) error {
 
 	//----------------------------------------------------------------------------//
@@ -299,7 +283,7 @@ func convertWorldPhysics(
 		)
 	}
 
-	phys, err := DecodeKv3(block, PhysicsKeys, zd)
+	phys, err := DecodeKv3(block, PhysicsKeys)
 	if err != nil {
 		return errors.New(
 			"failed to decode phys block",
