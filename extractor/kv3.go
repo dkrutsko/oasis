@@ -4,202 +4,133 @@ package main
 // ValveResourceFormat's `BinaryKV3.cs` (MIT License, Copyright (c) 2015
 // ValveResourceFormat Contributors). See NOTICE for the license text.
 //
-// Versions 1 to 5 are supported. The legacy VKV3 format (version 0) is not.
-// CS2 map physics currently use version 5 with zstd compression.
+// Only versions 4 and 5 with zstd compression are supported, which is
+// what the physics of every CS2 map use. Other versions and compression
+// methods are rejected with an error.
 
 import (
-	"bytes"
 	"encoding/binary"
 	"math"
-	"strconv"
-	"sync"
 
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/dkrutsko/oasis/errors"
 )
 
+//----------------------------------------------------------------------------//
+// Constants                                                                  //
+//----------------------------------------------------------------------------//
+
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
-	kv3MagicLegacy = 0x03564B56 // "VKV\x03"
-	kv3MagicPrefix = 0x4B563300 // "\x003VK" with the version in the low byte
-	kv3Trailer     = 0xFFEEDD00
+	// The magic is "\x003VK" with the version in the low byte
+	kv3MagicPrefix = 0x4B563300
+	kv3MagicMask   = 0xFFFFFF00
 
-	kv3CompressionNone = 0
-	kv3CompressionLz4  = 1
+	// Value that ends every KV3 block
+	kv3Trailer = 0xFFEEDD00
+
+	// The only compression method used by CS2 map physics
 	kv3CompressionZstd = 2
 
-	// LZ4 frame size VRF requires for version 2 and later
-	kv3Lz4FrameSize = 16384
-)
+	// Header sizes of the supported versions, counting the magic
+	// and the format GUID that start the header
+	kv3HeaderSizeV4 = 72
+	kv3HeaderSizeV5 = 120
 
-// Binary node types, matching `KV3BinaryNodeType` in VRF
-const (
-	kv3Null            = 1
-	kv3Boolean         = 2
-	kv3Int64           = 3
-	kv3UInt64          = 4
-	kv3Double          = 5
-	kv3String          = 6
-	kv3BinaryBlob      = 7
-	kv3Array           = 8
-	kv3Object          = 9
-	kv3ArrayTyped      = 10
-	kv3Int32           = 11
-	kv3UInt32          = 12
-	kv3BooleanTrue     = 13
-	kv3BooleanFalse    = 14
-	kv3Int64Zero       = 15
-	kv3Int64One        = 16
-	kv3DoubleZero      = 17
-	kv3DoubleOne       = 18
-	kv3Float           = 19
-	kv3Int16           = 20
-	kv3UInt16          = 21
-	kv3Int32AsByte     = 23
-	kv3ArrayByteLength = 24
-	kv3ArrayAuxiliary  = 25
+	// Limits that stop a corrupt block from exhausting memory or
+	// the stack. Real map physics stay far below them.
+	kv3MaxDecodedSize = 1 << 30
+	kv3MaxDepth       = 64
+	kv3MaxPreallocate = 1 << 16
 )
-
-var errKv3Truncated = errors.New("kv3 data is truncated")
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Kind is the type of a decoded KV3 value.
-type Kind uint8
-
+// Value types as stored in the types buffer, matching
+// `KV3BinaryNodeType` in VRF
 const (
-	KindNull Kind = iota
-	KindBool
-	KindInt
-	KindUInt
-	KindFloat
-	KindString
-	KindBlob
-	KindArray
-	KindObject
+	kv3TypeNull            = 1
+	kv3TypeBoolean         = 2
+	kv3TypeInt64           = 3
+	kv3TypeUint64          = 4
+	kv3TypeDouble          = 5
+	kv3TypeString          = 6
+	kv3TypeBlob            = 7
+	kv3TypeArray           = 8
+	kv3TypeObject          = 9
+	kv3TypeArrayTyped      = 10
+	kv3TypeInt32           = 11
+	kv3TypeUint32          = 12
+	kv3TypeBooleanTrue     = 13
+	kv3TypeBooleanFalse    = 14
+	kv3TypeInt64Zero       = 15
+	kv3TypeInt64One        = 16
+	kv3TypeDoubleZero      = 17
+	kv3TypeDoubleOne       = 18
+	kv3TypeFloat           = 19
+	kv3TypeInt16           = 20
+	kv3TypeUint16          = 21
+	kv3TypeInt32AsByte     = 23
+	kv3TypeArrayByteLength = 24
+	kv3TypeArrayAuxiliary  = 25
+
+	// A set high bit means a flag byte follows the type. The
+	// low six bits hold the type itself.
+	kv3TypeFlagged = 0x80
+	kv3TypeMask    = 0x3F
 )
 
-// Value is a decoded KV3 value. Arrays and objects keep their children in
-// order. Object children are named, array children are not. Blobs point
-// into the decompressed buffer rather than being copied.
-type Value struct {
-	Kind Kind
+//----------------------------------------------------------------------------//
+// Types                                                                      //
+//----------------------------------------------------------------------------//
 
-	bits     uint64
-	str      string
+////////////////////////////////////////////////////////////////////////////////
+
+// Kv3Kind is the type of a decoded KV3 value.
+type Kv3Kind uint8
+
+const (
+	Kv3KindNull Kv3Kind = iota
+	Kv3KindBool
+	Kv3KindInt
+	Kv3KindUint
+	Kv3KindFloat
+	Kv3KindString
+	Kv3KindBlob
+	Kv3KindArray
+	Kv3KindObject
+)
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Kv3Value is a decoded KV3 value. Arrays keep their elements
+// and objects their fields, both in order. Blobs point into the
+// decompressed data rather than being copied.
+type Kv3Value struct {
+	Kind Kv3Kind
+
+	number   uint64
+	text     string
 	blob     []byte
-	children []Field
+	elements []Kv3Value
+	fields   []Kv3Field
 }
 
-// Field is a named object child or an unnamed array element.
-type Field struct {
+////////////////////////////////////////////////////////////////////////////////
+
+// Kv3Field is a named value of an object.
+type Kv3Field struct {
 	Name  string
-	Value Value
+	Value Kv3Value
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetChild returns the first child with the given name. It returns nil when
-// the value is nil, is not an object, or has no such child.
-func (v *Value) GetChild(name string) *Value {
-
-	if v == nil || v.Kind != KindObject {
-		return nil
-	}
-
-	for i := range v.children {
-		if v.children[i].Name == name {
-			return &v.children[i].Value
-		}
-	}
-	return nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// GetElement returns the array element at index, or nil when the value is
-// nil, is not an array, or the index is out of range.
-func (v *Value) GetElement(index int) *Value {
-
-	if v == nil || v.Kind != KindArray || index < 0 || index >= len(v.children) {
-		return nil
-	}
-	return &v.children[index].Value
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// GetBlob returns the bytes of a binary blob, or nil for any other value.
-func (v *Value) GetBlob() []byte {
-
-	if v == nil || v.Kind != KindBlob {
-		return nil
-	}
-	return v.blob
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// GetText returns the value as the original extractor's text parser saw it.
-// Missing values are empty, strings are returned as is, numbers as decimal
-// text, and other types as a non-empty placeholder that never parses as a
-// number.
-func (v *Value) GetText() string {
-
-	if v == nil {
-		return ""
-	}
-
-	switch v.Kind {
-	case KindString:
-		return v.str
-	case KindInt:
-		return strconv.FormatInt(int64(v.bits), 10)
-	case KindUInt:
-		return strconv.FormatUint(v.bits, 10)
-	case KindFloat:
-		return strconv.FormatFloat(math.Float64frombits(v.bits), 'g', -1, 64)
-	case KindBool:
-		if v.bits != 0 {
-			return "1"
-		}
-		return "0"
-	case KindNull:
-		return "null"
-	default:
-		return "[" + strconv.Itoa(int(v.Kind)) + "]"
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-type kv3Buffers struct {
-	bytes1 []byte
-	bytes2 []byte
-	bytes4 []byte
-	bytes8 []byte
-}
-
-type kv3Context struct {
-	version       int
-	types         []byte
-	objectLengths []byte
-	blobs         []byte
-	blobLengths   []byte
-	strings       []string
-
-	// Object fields to keep, or nil to keep everything. Other fields are
-	// still read, since the format is sequential, but are not stored.
-	keep map[string]bool
-
-	// Version 5 splits values into two buffers. Auxiliary arrays read from
-	// the other one, so the two are swapped while reading them.
-	buffer    *kv3Buffers
-	auxiliary *kv3Buffers
-}
-
+// kv3Header holds the header fields that locate and split the
+// buffers of a KV3 block.
 type kv3Header struct {
 	version     int
 	compression uint32
@@ -207,58 +138,198 @@ type kv3Header struct {
 	dictionaryId uint16
 	frameSize    uint16
 
-	countBytes1 int
-	countBytes2 int
-	countBytes4 int
-	countBytes8 int
 	countTypes  int
 	countBlocks int
+	sizeBlobs   int
 
 	sizeUncompressedTotal    int
 	sizeCompressedTotal      int
-	sizeBlobs                int
 	sizeBlockCompressedSizes int
 
-	sizeUncompressedBuffer1 int
-	sizeCompressedBuffer1   int
-	sizeUncompressedBuffer2 int
-	sizeCompressedBuffer2   int
+	// Version 4 has a single buffer. Version 5 adds a second one
+	// that holds the object lengths, the main values and types.
+	buffer1 kv3BufferHeader
+	buffer2 kv3BufferHeader
 
-	countBytes1Buffer2  int
-	countBytes2Buffer2  int
-	countBytes4Buffer2  int
-	countBytes8Buffer2  int
 	countObjectsBuffer2 int
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// DecodeKv3 decodes a binary KV3 block. When keep is not nil, only object
-// fields with those names are stored, which saves memory when the caller
-// needs a small part of a large block. Array elements are always stored.
-// The zstd decoder must allow at least three concurrent `DecodeAll` calls.
-func DecodeKv3(data []byte, keep map[string]bool, zd *zstd.Decoder) (*Value, error) {
+// kv3BufferHeader holds the sizes of one value buffer and the
+// number of 1, 2, 4 and 8 byte values in it.
+type kv3BufferHeader struct {
+	sizeCompressed   int
+	sizeUncompressed int
+
+	count1 int
+	count2 int
+	count4 int
+	count8 int
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// kv3Buffers holds the 1, 2, 4 and 8 byte value arrays of one
+// value buffer.
+type kv3Buffers struct {
+	bytes1 binaryReader
+	bytes2 binaryReader
+	bytes4 binaryReader
+	bytes8 binaryReader
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// kv3Frame is one zstd frame of a KV3 block.
+type kv3Frame struct {
+	sizeCompressed   int
+	sizeUncompressed int
+
+	source []byte
+	data   []byte
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// kv3Decoder holds the state of a single `DecodeKv3` call.
+type kv3Decoder struct {
+	version int
+	keep    map[string]bool
+	depth   int
+
+	strings       []string
+	types         binaryReader
+	objectLengths binaryReader
+	blobLengths   binaryReader
+	blobs         binaryReader
+
+	// Values are read from `buffer`. Auxiliary arrays read from
+	// the other buffer, so the two are swapped while reading them.
+	buffer    *kv3Buffers
+	auxiliary *kv3Buffers
+}
+
+//----------------------------------------------------------------------------//
+// Methods                                                                    //
+//----------------------------------------------------------------------------//
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetField returns the value of the named field, or nil when the
+// value is nil, is not an object, or has no such field.
+func (v *Kv3Value) GetField(name string) *Kv3Value {
+
+	if v == nil {
+		return nil
+	}
+
+	for i := range v.fields {
+		if v.fields[i].Name == name {
+			return &v.fields[i].Value
+		}
+	}
+
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetElements returns the elements of an array, or nil when the
+// value is nil or is not an array.
+func (v *Kv3Value) GetElements() []Kv3Value {
+
+	if v == nil {
+		return nil
+	}
+
+	return v.elements
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetBlob returns the bytes of a blob, or nil for any other value.
+func (v *Kv3Value) GetBlob() []byte {
+
+	if v == nil || v.Kind != Kv3KindBlob {
+		return nil
+	}
+
+	return v.blob
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetString returns the text of a string, or an empty string for
+// any other value.
+func (v *Kv3Value) GetString() string {
+
+	if v == nil || v.Kind != Kv3KindString {
+		return ""
+	}
+
+	return v.text
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetInt returns the value of a signed or unsigned integer. The
+// second result is false for any other value.
+func (v *Kv3Value) GetInt() (int64, bool) {
+
+	if v == nil || (v.Kind != Kv3KindInt && v.Kind != Kv3KindUint) {
+		return 0, false
+	}
+
+	return int64(v.number), true
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetFloat returns the value of a floating point number. The
+// second result is false for any other value.
+func (v *Kv3Value) GetFloat() (float64, bool) {
+
+	if v == nil || v.Kind != Kv3KindFloat {
+		return 0, false
+	}
+
+	return math.Float64frombits(v.number), true
+}
+
+//----------------------------------------------------------------------------//
+// Decoding                                                                   //
+//----------------------------------------------------------------------------//
+
+////////////////////////////////////////////////////////////////////////////////
+
+// DecodeKv3 decodes a binary KV3 block. When `keep` is not nil,
+// only object fields with those names are stored, which saves
+// memory when the caller needs a small part of a large block.
+// Array elements are always stored. The zstd decoder must allow
+// at least three concurrent `DecodeAll` calls.
+func DecodeKv3(data []byte, keep map[string]bool, zd *zstd.Decoder) (*Kv3Value, error) {
 
 	//----------------------------------------------------------------------------//
 
 	if len(data) < 4 {
-		return nil, errKv3Truncated
-	}
-
-	magic := binary.LittleEndian.Uint32(data)
-	if magic == kv3MagicLegacy {
-		return nil, errors.New("legacy vkv3 format is not supported")
-	}
-
-	version := int(magic & 0xFF)
-	if magic&0xFFFFFF00 != kv3MagicPrefix || version < 1 || version > 5 {
 		return nil, errors.New(
-			"unsupported kv3 signature",
+			"kv3 block is too small",
+			errors.Int("size", len(data)),
+		)
+	}
+
+	magic := binary.LittleEndian.Uint32(data[0:4])
+	version := int(magic &^ kv3MagicMask)
+
+	if magic&kv3MagicMask != kv3MagicPrefix || (version != 4 && version != 5) {
+		return nil, errors.New(
+			"unsupported kv3 version",
 			errors.Uint32("magic", magic),
 		)
 	}
 
-	h, pos, err := readKv3Header(data, version)
+	header, err := readKv3Header(data, version)
 	if err != nil {
 		return nil, errors.New(
 			"failed to read kv3 header",
@@ -268,86 +339,36 @@ func DecodeKv3(data []byte, keep map[string]bool, zd *zstd.Decoder) (*Value, err
 
 	//----------------------------------------------------------------------------//
 
-	// Decompress the value buffers. In version 5 with zstd the buffers and
-	// the blobs are three independent frames with known sizes, so decode
-	// them concurrently.
-	var raw1, raw2, rawBlobs []byte
-
-	if version >= 5 && h.compression == kv3CompressionZstd {
-		raw1, raw2, rawBlobs, pos, err = decodeKv3ZstdFrames(data, pos, h, zd)
-		if err != nil {
-			return nil, errors.New(
-				"failed to read kv3 buffers",
-				errors.Error("error", err),
-			)
-		}
-	} else {
-		size1 := h.sizeUncompressedBuffer1
-		if version < 5 && h.compression == kv3CompressionZstd {
-			// Before version 5 the blobs share the first zstd frame
-			size1 += h.sizeBlobs
-		}
-
-		raw1, pos, err = readKv3Section(data, pos, h.compression, h.sizeCompressedBuffer1, size1, zd)
-		if err != nil {
-			return nil, errors.New(
-				"failed to read kv3 buffer",
-				errors.Int("buffer", 1),
-				errors.Error("error", err),
-			)
-		}
-
-		if version >= 5 {
-			raw2, pos, err = readKv3Section(data, pos, h.compression, h.sizeCompressedBuffer2, h.sizeUncompressedBuffer2, zd)
-			if err != nil {
-				return nil, errors.New(
-					"failed to read kv3 buffer",
-					errors.Int("buffer", 2),
-					errors.Error("error", err),
-				)
-			}
-		}
-	}
-
-	//----------------------------------------------------------------------------//
-
-	ctx := &kv3Context{version: version, keep: keep}
-
-	blobSizes, err := ctx.readBuffer1(raw1[:h.sizeUncompressedBuffer1], h)
+	frames, err := decodeKv3Frames(data, header, zd)
 	if err != nil {
 		return nil, errors.New(
-			"failed to parse kv3 buffer",
-			errors.Int("buffer", 1),
+			"failed to decompress kv3 block",
 			errors.Error("error", err),
 		)
 	}
 
-	if version >= 5 {
-		blobSizes, err = ctx.readBuffer2(raw2, h)
-		if err != nil {
-			return nil, errors.New(
-				"failed to parse kv3 buffer",
-				errors.Int("buffer", 2),
-				errors.Error("error", err),
-			)
-		}
+	decoder := &kv3Decoder{
+		version: version,
+		keep:    keep,
+	}
+
+	if version == 4 {
+		err = decoder.readVersion4(frames, header)
+	} else {
+		err = decoder.readVersion5(frames, header)
+	}
+
+	if err != nil {
+		return nil, errors.New(
+			"failed to read kv3 buffers",
+			errors.Error("error", err),
+		)
 	}
 
 	//----------------------------------------------------------------------------//
 
-	if h.countBlocks > 0 {
-		pos, err = ctx.readBlobs(data, pos, h, blobSizes, raw1, rawBlobs)
-		if err != nil {
-			return nil, errors.New(
-				"failed to read kv3 blobs",
-				errors.Error("error", err),
-			)
-		}
-	}
-
-	//----------------------------------------------------------------------------//
-
-	rootType, err := ctx.readType()
+	// The root value has a type of its own like any other value
+	rootType, err := decoder.readType()
 	if err != nil {
 		return nil, errors.New(
 			"failed to read kv3 values",
@@ -355,7 +376,7 @@ func DecodeKv3(data []byte, keep map[string]bool, zd *zstd.Decoder) (*Value, err
 		)
 	}
 
-	root, err := ctx.readValue(rootType, false)
+	root, err := decoder.readValue(rootType, false)
 	if err != nil {
 		return nil, errors.New(
 			"failed to read kv3 values",
@@ -370,812 +391,936 @@ func DecodeKv3(data []byte, keep map[string]bool, zd *zstd.Decoder) (*Value, err
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// readKv3Header reads the fields between the magic and the first buffer. It
-// returns the position of the first buffer.
-func readKv3Header(data []byte, version int) (kv3Header, int, error) {
+// readKv3Header reads the header fields that follow the magic
+// and the 16 byte format GUID.
+func readKv3Header(data []byte, version int) (kv3Header, error) {
 
 	//----------------------------------------------------------------------------//
 
-	h := kv3Header{version: version}
-	r := &kv3HeaderReader{data: data, pos: 4}
-
-	r.skip(16) // format GUID, not needed
-
-	h.compression = r.uint32()
-
-	if version == 1 {
-		// Version 1 has no extra compression fields
-		h.countBytes1 = r.int32()
-		h.countBytes4 = r.int32()
-		h.countBytes8 = r.int32()
-		h.sizeUncompressedTotal = r.int32()
-		h.sizeCompressedTotal = len(data) - r.pos
-	} else {
-		h.dictionaryId = r.uint16()
-		h.frameSize = r.uint16()
-		h.countBytes1 = r.int32()
-		h.countBytes4 = r.int32()
-		h.countBytes8 = r.int32()
-		h.countTypes = r.int32()
-		r.uint16() // object count
-		r.uint16() // array count
-		h.sizeUncompressedTotal = r.int32()
-		h.sizeCompressedTotal = r.int32()
-		h.countBlocks = r.int32()
-		h.sizeBlobs = r.int32()
+	size := kv3HeaderSizeV4
+	if version == 5 {
+		size = kv3HeaderSizeV5
 	}
 
-	if version >= 4 {
-		h.countBytes2 = r.int32()
-		h.sizeBlockCompressedSizes = r.int32()
-	}
-
-	if version >= 5 {
-		h.sizeUncompressedBuffer1 = r.int32()
-		h.sizeCompressedBuffer1 = r.int32()
-		h.sizeUncompressedBuffer2 = r.int32()
-		h.sizeCompressedBuffer2 = r.int32()
-		h.countBytes1Buffer2 = r.int32()
-		h.countBytes2Buffer2 = r.int32()
-		h.countBytes4Buffer2 = r.int32()
-		h.countBytes8Buffer2 = r.int32()
-		r.int32() // unknown
-		h.countObjectsBuffer2 = r.int32()
-		r.int32() // array count in buffer 2
-		r.int32() // unknown
-	} else {
-		h.sizeCompressedBuffer1 = h.sizeCompressedTotal
-		h.sizeUncompressedBuffer1 = h.sizeUncompressedTotal
-	}
-
-	if r.err != nil {
-		return h, 0, r.err
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Sizes and counts are signed in the format, reject negative ones
-	for _, n := range []int{
-		h.countBytes1, h.countBytes2, h.countBytes4, h.countBytes8, h.countTypes,
-		h.countBlocks, h.sizeUncompressedTotal, h.sizeCompressedTotal, h.sizeBlobs,
-		h.sizeUncompressedBuffer1, h.sizeCompressedBuffer1,
-		h.sizeUncompressedBuffer2, h.sizeCompressedBuffer2,
-		h.countBytes1Buffer2, h.countBytes2Buffer2, h.countBytes4Buffer2,
-		h.countBytes8Buffer2, h.countObjectsBuffer2,
-	} {
-		if n < 0 {
-			return h, 0, errors.New("kv3 header has a negative size")
-		}
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Same restrictions as VRF on the compression parameters
-	switch h.compression {
-	case kv3CompressionNone:
-		if h.dictionaryId != 0 || h.frameSize != 0 {
-			return h, 0, errors.New("unexpected kv3 compression parameters")
-		}
-	case kv3CompressionLz4:
-		if h.dictionaryId != 0 || (version >= 2 && h.frameSize != kv3Lz4FrameSize) {
-			return h, 0, errors.New("unexpected kv3 lz4 parameters")
-		}
-	case kv3CompressionZstd:
-		if h.dictionaryId != 0 || h.frameSize != 0 {
-			return h, 0, errors.New("unexpected kv3 zstd parameters")
-		}
-	default:
-		return h, 0, errors.New(
-			"unknown kv3 compression method",
-			errors.Uint32("method", h.compression),
+	if len(data) < size {
+		return kv3Header{}, errors.New(
+			"kv3 header is truncated",
+			errors.Int("size", len(data)),
 		)
 	}
 
-	return h, r.pos, nil
+	header := kv3Header{
+		version:     version,
+		compression: binary.LittleEndian.Uint32(data[20:24]),
 
-	//----------------------------------------------------------------------------//
-}
+		dictionaryId: binary.LittleEndian.Uint16(data[24:26]),
+		frameSize:    binary.LittleEndian.Uint16(data[26:28]),
 
-////////////////////////////////////////////////////////////////////////////////
+		countTypes:  readKv3Int32(data, 40),
+		countBlocks: readKv3Int32(data, 56),
+		sizeBlobs:   readKv3Int32(data, 60),
 
-// decodeKv3ZstdFrames decodes both value buffers and the blobs of a version 5
-// zstd block concurrently. It returns the position after the blob frame.
-func decodeKv3ZstdFrames(data []byte, pos int, h kv3Header, zd *zstd.Decoder) ([]byte, []byte, []byte, int, error) {
+		sizeUncompressedTotal:    readKv3Int32(data, 48),
+		sizeCompressedTotal:      readKv3Int32(data, 52),
+		sizeBlockCompressedSizes: readKv3Int32(data, 68),
 
-	//----------------------------------------------------------------------------//
-
-	type frame struct {
-		src  []byte
-		size int
-		out  []byte
-		err  error
+		buffer1: kv3BufferHeader{
+			count1: readKv3Int32(data, 28),
+			count2: readKv3Int32(data, 64),
+			count4: readKv3Int32(data, 32),
+			count8: readKv3Int32(data, 36),
+		},
 	}
 
-	frames := []*frame{
-		{size: h.sizeUncompressedBuffer1},
-		{size: h.sizeUncompressedBuffer2},
-	}
-	compressed := []int{h.sizeCompressedBuffer1, h.sizeCompressedBuffer2}
+	//----------------------------------------------------------------------------//
 
-	if h.countBlocks > 0 {
-		if h.sizeBlockCompressedSizes != 0 {
-			return nil, nil, nil, 0, errors.New("unexpected kv3 block compressed sizes")
+	if version == 4 {
+		// The single buffer uses the sizes of the whole block
+		header.buffer1.sizeCompressed = header.sizeCompressedTotal
+		header.buffer1.sizeUncompressed = header.sizeUncompressedTotal
+
+	} else {
+		header.buffer1.sizeUncompressed = readKv3Int32(data, 72)
+		header.buffer1.sizeCompressed = readKv3Int32(data, 76)
+
+		header.buffer2 = kv3BufferHeader{
+			sizeUncompressed: readKv3Int32(data, 80),
+			sizeCompressed:   readKv3Int32(data, 84),
+
+			count1: readKv3Int32(data, 88),
+			count2: readKv3Int32(data, 92),
+			count4: readKv3Int32(data, 96),
+			count8: readKv3Int32(data, 100),
 		}
-		frames = append(frames, &frame{size: h.sizeBlobs})
-		compressed = append(compressed, h.sizeCompressedTotal-h.sizeCompressedBuffer1-h.sizeCompressedBuffer2)
-	}
 
-	for i, f := range frames {
-		src, err := sliceAt(data, pos, compressed[i])
-		if err != nil {
-			return nil, nil, nil, 0, err
-		}
-		f.src = src
-		pos += compressed[i]
+		header.countObjectsBuffer2 = readKv3Int32(data, 108)
 	}
 
 	//----------------------------------------------------------------------------//
 
-	var wg sync.WaitGroup
-	for _, f := range frames {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			f.out, f.err = zstdDecode(zd, f.src, f.size)
-		}()
+	// Sizes and counts are signed in the format
+	sizes := []int{
+		header.countTypes,
+		header.countBlocks,
+		header.sizeBlobs,
+		header.sizeUncompressedTotal,
+		header.sizeCompressedTotal,
+		header.buffer1.sizeCompressed,
+		header.buffer1.sizeUncompressed,
+		header.buffer1.count1,
+		header.buffer1.count2,
+		header.buffer1.count4,
+		header.buffer1.count8,
+		header.buffer2.sizeCompressed,
+		header.buffer2.sizeUncompressed,
+		header.buffer2.count1,
+		header.buffer2.count2,
+		header.buffer2.count4,
+		header.buffer2.count8,
+		header.countObjectsBuffer2,
 	}
-	wg.Wait()
 
-	for _, f := range frames {
-		if f.err != nil {
-			return nil, nil, nil, 0, errors.New(
-				"failed to decompress kv3 zstd frame",
-				errors.Error("error", f.err),
+	for _, value := range sizes {
+		if value < 0 {
+			return kv3Header{}, errors.New(
+				"kv3 header has a negative size",
+				errors.Int("value", value),
 			)
 		}
 	}
 
 	//----------------------------------------------------------------------------//
 
-	var blobs []byte
-	if len(frames) > 2 {
-		blobs = frames[2].out
+	// VRF rejects dictionaries and frame sizes with zstd as well
+	if header.compression != kv3CompressionZstd {
+		return kv3Header{}, errors.New(
+			"unsupported kv3 compression method",
+			errors.Uint32("method", header.compression),
+		)
 	}
 
-	return frames[0].out, frames[1].out, blobs, pos, nil
+	if header.dictionaryId != 0 || header.frameSize != 0 {
+		return kv3Header{}, errors.New(
+			"unexpected kv3 zstd parameters",
+			errors.Uint16("dictionary_id", header.dictionaryId),
+			errors.Uint16("frame_size", header.frameSize),
+		)
+	}
+
+	return header, nil
 
 	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// readKv3Section reads one buffer that is stored uncompressed or compressed
-// with a single LZ4 block or zstd frame. It returns the position after it.
-func readKv3Section(data []byte, pos int, method uint32, compressed, size int, zd *zstd.Decoder) ([]byte, int, error) {
-
-	switch method {
-	case kv3CompressionNone:
-		src, err := sliceAt(data, pos, size)
-		return src, pos + size, err
-
-	case kv3CompressionLz4:
-		src, err := sliceAt(data, pos, compressed)
-		if err != nil {
-			return nil, 0, err
-		}
-		out := make([]byte, size)
-		n, err := lz4DecodeBlock(out, 0, src)
-		if err != nil {
-			return nil, 0, err
-		}
-		if n != size {
-			return nil, 0, errors.New(
-				"unexpected lz4 decoded size",
-				errors.Int("decoded", n),
-				errors.Int("expected", size),
-			)
-		}
-		return out, pos + compressed, nil
-
-	default:
-		src, err := sliceAt(data, pos, compressed)
-		if err != nil {
-			return nil, 0, err
-		}
-		out, err := zstdDecode(zd, src, size)
-		return out, pos + compressed, err
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// readBuffer1 splits the first buffer into its value arrays and reads the
-// string table. Before version 5 it also holds the types. It returns the
-// remaining bytes that list the blob sizes, if any.
-func (c *kv3Context) readBuffer1(buf []byte, h kv3Header) ([]byte, error) {
+// decodeKv3Frames decompresses the zstd frames that follow the
+// header. Version 4 stores its buffer and the blobs in a single
+// frame. Version 5 stores both buffers and the blobs in frames
+// of their own, which are decoded at the same time.
+func decodeKv3Frames(data []byte, header kv3Header, zd *zstd.Decoder) ([]*kv3Frame, error) {
 
 	//----------------------------------------------------------------------------//
 
-	b := &kv3Buffers{}
-	offset := 0
+	var frames []*kv3Frame
 
-	if err := splitKv3Buffers(buf, &offset, b, h.countBytes1, h.countBytes2, h.countBytes4, h.countBytes8); err != nil {
-		return nil, err
-	}
+	if header.version == 4 {
+		frames = append(frames, &kv3Frame{
+			sizeCompressed:   header.buffer1.sizeCompressed,
+			sizeUncompressed: header.buffer1.sizeUncompressed + header.sizeBlobs,
+		})
 
-	// Version 5 does not align when there are no 8 byte values, earlier
-	// versions do
-	if h.countBytes8 == 0 && c.version < 5 {
-		offset = align(offset, 8)
-	}
+	} else {
+		frames = append(frames, &kv3Frame{
+			sizeCompressed:   header.buffer1.sizeCompressed,
+			sizeUncompressed: header.buffer1.sizeUncompressed,
+		})
 
-	countStrings, err := takeInt32(&b.bytes4)
-	if err != nil {
-		return nil, err
-	}
-	if countStrings < 0 {
-		return nil, errors.New("kv3 string count is negative")
-	}
-	c.strings = make([]string, countStrings)
+		frames = append(frames, &kv3Frame{
+			sizeCompressed:   header.buffer2.sizeCompressed,
+			sizeUncompressed: header.buffer2.sizeUncompressed,
+		})
 
-	//----------------------------------------------------------------------------//
-
-	if c.version >= 5 {
-		// Strings come first in the byte array of the first buffer, which
-		// then serves as the auxiliary buffer
-		c.auxiliary = b
-		for i := range c.strings {
-			if c.strings[i], err = takeCString(&b.bytes1); err != nil {
-				return nil, err
+		if header.countBlocks > 0 {
+			if header.sizeBlockCompressedSizes != 0 {
+				return nil, errors.New("unexpected kv3 block compressed sizes")
 			}
+
+			// The blob frame takes the rest of the compressed data
+			compressed := header.sizeCompressedTotal
+			compressed -= header.buffer1.sizeCompressed
+			compressed -= header.buffer2.sizeCompressed
+
+			frames = append(frames, &kv3Frame{
+				sizeCompressed:   compressed,
+				sizeUncompressed: header.sizeBlobs,
+			})
 		}
-		return nil, nil
 	}
 
 	//----------------------------------------------------------------------------//
 
-	c.buffer = b
-
-	if offset > len(buf) {
-		return nil, errKv3Truncated
+	size := kv3HeaderSizeV4
+	if header.version == 5 {
+		size = kv3HeaderSizeV5
 	}
-	stringsBuf := buf[offset:]
-	stringsStart := offset
 
-	for i := range c.strings {
-		before := len(stringsBuf)
-		if c.strings[i], err = takeCString(&stringsBuf); err != nil {
+	// The frames follow the header back to back
+	reader := &binaryReader{data: data, pos: size}
+
+	for _, frame := range frames {
+		if frame.sizeUncompressed > kv3MaxDecodedSize {
+			return nil, errors.New(
+				"kv3 frame is too large",
+				errors.Int("size", frame.sizeUncompressed),
+			)
+		}
+
+		source, err := reader.ReadBytes(frame.sizeCompressed)
+		if err != nil {
 			return nil, err
 		}
-		offset += before - len(stringsBuf)
+
+		frame.source = source
 	}
 
-	var typesLength int
-	if c.version == 1 {
-		typesLength = h.sizeUncompressedTotal - offset - 4
-	} else {
-		typesLength = h.countTypes - offset + stringsStart
+	// Blocks with blobs end with a trailer after the frames
+	if header.countBlocks > 0 {
+		err := readKv3Trailer(reader)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	if c.types, err = sliceAt(buf, offset, typesLength); err != nil {
+	//----------------------------------------------------------------------------//
+
+	var group errgroup.Group
+
+	for _, frame := range frames {
+		group.Go(func() error {
+
+			output, err := decodeZstdFrame(zd, frame.source, frame.sizeUncompressed)
+			if err != nil {
+				return err
+			}
+
+			frame.data = output
+			return nil
+		})
+	}
+
+	err := group.Wait()
+	if err != nil {
 		return nil, err
 	}
-	offset += typesLength
 
-	return readKv3TypesEnd(buf, offset, h.countBlocks)
+	return frames, nil
 
 	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// readBuffer2 splits the version 5 second buffer, which holds the object
-// lengths, the main value arrays and the types.
-func (c *kv3Context) readBuffer2(buf []byte, h kv3Header) ([]byte, error) {
+// readVersion4 splits the single version 4 buffer. It holds the
+// value arrays, the strings, the types and the blob lengths. The
+// blobs follow it in the same frame.
+func (d *kv3Decoder) readVersion4(frames []*kv3Frame, header kv3Header) error {
 
-	b := &kv3Buffers{}
-	c.buffer = b
+	//----------------------------------------------------------------------------//
 
-	offset := h.countObjectsBuffer2 * 4
-	lengths, err := sliceAt(buf, 0, offset)
+	size := header.buffer1.sizeUncompressed
+	reader := &binaryReader{data: frames[0].data[:size]}
+
+	buffer, err := readKv3Arrays(reader, header.buffer1)
 	if err != nil {
-		return nil, err
-	}
-	c.objectLengths = lengths
-
-	if err := splitKv3Buffers(buf, &offset, b, h.countBytes1Buffer2, h.countBytes2Buffer2, h.countBytes4Buffer2, h.countBytes8Buffer2); err != nil {
-		return nil, err
+		return err
 	}
 
-	if c.types, err = sliceAt(buf, offset, h.countTypes); err != nil {
-		return nil, err
-	}
-	offset += h.countTypes
+	d.buffer = buffer
 
-	return readKv3TypesEnd(buf, offset, h.countBlocks)
+	//----------------------------------------------------------------------------//
+
+	// The strings start at an 8 byte boundary. The type count
+	// covers the strings and the types together.
+	reader.Align(8)
+	stringsStart := reader.GetPosition()
+
+	d.strings, err = readKv3Strings(&buffer.bytes4, reader)
+	if err != nil {
+		return err
+	}
+
+	typesSize := header.countTypes - (reader.GetPosition() - stringsStart)
+
+	types, err := reader.ReadBytes(typesSize)
+	if err != nil {
+		return err
+	}
+
+	d.types = binaryReader{data: types}
+
+	//----------------------------------------------------------------------------//
+
+	err = d.readBlobLengths(reader, header.countBlocks)
+	if err != nil {
+		return err
+	}
+
+	d.blobs = binaryReader{data: frames[0].data[size:]}
+	return nil
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// readBlobs reads the blob lengths and the blob data that follows the value
-// buffers, then checks the trailer. It returns the position after it.
-func (c *kv3Context) readBlobs(data []byte, pos int, h kv3Header, blobSizes, raw1, rawBlobs []byte) (int, error) {
+// readVersion5 splits the two version 5 buffers. The first holds
+// the strings and the values of auxiliary arrays. The second
+// holds the object lengths, the main values, the types and the
+// blob lengths. The blobs have a frame of their own.
+func (d *kv3Decoder) readVersion5(frames []*kv3Frame, header kv3Header) error {
 
 	//----------------------------------------------------------------------------//
 
-	if c.version < 2 {
-		return 0, errors.New("kv3 version 1 cannot have separate blobs")
+	reader1 := &binaryReader{data: frames[0].data}
+
+	auxiliary, err := readKv3Arrays(reader1, header.buffer1)
+	if err != nil {
+		return err
 	}
 
-	lengths, err := sliceAt(blobSizes, 0, h.countBlocks*4)
+	// The strings come first in the 1 byte values
+	d.strings, err = readKv3Strings(&auxiliary.bytes4, &auxiliary.bytes1)
+	if err != nil {
+		return err
+	}
+
+	d.auxiliary = auxiliary
+
+	//----------------------------------------------------------------------------//
+
+	reader2 := &binaryReader{data: frames[1].data}
+
+	objectLengths, err := reader2.ReadBytes(header.countObjectsBuffer2 * 4)
+	if err != nil {
+		return err
+	}
+
+	d.objectLengths = binaryReader{data: objectLengths}
+
+	d.buffer, err = readKv3Arrays(reader2, header.buffer2)
+	if err != nil {
+		return err
+	}
+
+	types, err := reader2.ReadBytes(header.countTypes)
+	if err != nil {
+		return err
+	}
+
+	d.types = binaryReader{data: types}
+
+	//----------------------------------------------------------------------------//
+
+	err = d.readBlobLengths(reader2, header.countBlocks)
+	if err != nil {
+		return err
+	}
+
+	if len(frames) > 2 {
+		d.blobs = binaryReader{data: frames[2].data}
+	}
+
+	return nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readBlobLengths reads what follows the types, which is the
+// blob lengths, if there are blobs, and then the trailer.
+func (d *kv3Decoder) readBlobLengths(reader *binaryReader, countBlocks int) error {
+
+	if countBlocks > 0 {
+		lengths, err := reader.ReadBytes(countBlocks * 4)
+		if err != nil {
+			return err
+		}
+
+		d.blobLengths = binaryReader{data: lengths}
+	}
+
+	return readKv3Trailer(reader)
+}
+
+//----------------------------------------------------------------------------//
+// Values                                                                     //
+//----------------------------------------------------------------------------//
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readType returns the type of the next value. Flag bytes only
+// annotate values, marking resource names and such, so they are
+// skipped.
+func (d *kv3Decoder) readType() (byte, error) {
+
+	nodeType, err := d.types.ReadUint8()
 	if err != nil {
 		return 0, err
 	}
-	c.blobLengths = lengths
-	blobSizes = blobSizes[h.countBlocks*4:]
 
-	if err := expectTrailer(blobSizes); err != nil {
-		return 0, err
-	}
-	blobSizes = blobSizes[4:]
+	if nodeType&kv3TypeFlagged != 0 {
+		nodeType &= kv3TypeMask
 
-	//----------------------------------------------------------------------------//
-
-	switch h.compression {
-	case kv3CompressionNone:
-		if c.blobs, err = sliceAt(data, pos, h.sizeBlobs); err != nil {
+		_, err = d.types.ReadUint8()
+		if err != nil {
 			return 0, err
 		}
-		pos += h.sizeBlobs
+	}
 
-	case kv3CompressionLz4:
-		// Blobs are a chain of LZ4 blocks, each decoding to one frame and
-		// allowed to reference the frames before it
-		c.blobs = make([]byte, h.sizeBlobs)
-		decoded := 0
+	return nodeType, nil
+}
 
-		for len(blobSizes) >= 2 {
-			compressed := int(binary.LittleEndian.Uint16(blobSizes))
-			blobSizes = blobSizes[2:]
+////////////////////////////////////////////////////////////////////////////////
 
-			frame := min(int(h.frameSize), h.sizeBlobs-decoded)
-			src, err := sliceAt(data, pos, compressed)
-			if err != nil {
-				return 0, err
-			}
-			pos += compressed
+// readValue reads one value of the given type. When `discard` is
+// set, containers are walked without storing their contents,
+// since the caller throws the value away.
+func (d *kv3Decoder) readValue(nodeType byte, discard bool) (Kv3Value, error) {
 
-			n, err := lz4DecodeBlock(c.blobs[:decoded+frame], decoded, src)
-			if err != nil {
-				return 0, err
-			}
-			if n < 1 {
-				return 0, errors.New("lz4 blob frame decoded to nothing")
-			}
-			decoded += n
+	switch nodeType {
+
+	case kv3TypeString:
+		index, err := d.buffer.bytes4.ReadInt32()
+		if err != nil {
+			return Kv3Value{}, err
 		}
+
+		text, err := d.getString(index)
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		return Kv3Value{Kind: Kv3KindString, text: text}, nil
+
+	case kv3TypeBlob:
+		return d.readBlob()
+
+	case kv3TypeArray:
+		length, err := d.buffer.bytes4.ReadInt32()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		return d.readArray(int(length), discard)
+
+	case kv3TypeArrayTyped:
+		length, err := d.buffer.bytes4.ReadInt32()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		return d.readTypedArray(int(length), false, discard)
+
+	case kv3TypeArrayByteLength:
+		length, err := d.buffer.bytes1.ReadUint8()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		return d.readTypedArray(int(length), false, discard)
+
+	case kv3TypeArrayAuxiliary:
+		length, err := d.buffer.bytes1.ReadUint8()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		return d.readTypedArray(int(length), true, discard)
+
+	case kv3TypeObject:
+		// Version 5 keeps object lengths in a list of their own
+		var length int32
+		var err error
+
+		if d.version == 5 {
+			length, err = d.objectLengths.ReadInt32()
+		} else {
+			length, err = d.buffer.bytes4.ReadInt32()
+		}
+
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		return d.readObject(int(length), discard)
 
 	default:
-		if c.version >= 5 {
-			c.blobs = rawBlobs
-		} else {
-			// Before version 5 the blobs were decompressed with buffer 1
-			if c.blobs, err = sliceAt(raw1, h.sizeUncompressedBuffer1, h.sizeBlobs); err != nil {
-				return 0, err
-			}
-		}
+		return d.readScalar(nodeType)
 	}
-
-	//----------------------------------------------------------------------------//
-
-	if pos > len(data) {
-		return 0, errKv3Truncated
-	}
-	if err := expectTrailer(data[pos:]); err != nil {
-		return 0, err
-	}
-
-	return pos + 4, nil
-
-	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (c *kv3Context) readType() (byte, error) {
+// readScalar reads a null, a boolean or a number. Some values
+// are stored in the type alone, the rest in the value array of
+// their size.
+func (d *kv3Decoder) readScalar(nodeType byte) (Kv3Value, error) {
 
-	if len(c.types) == 0 {
-		return 0, errKv3Truncated
-	}
+	switch nodeType {
 
-	t := c.types[0]
-	c.types = c.types[1:]
+	case kv3TypeNull:
+		return Kv3Value{Kind: Kv3KindNull}, nil
 
-	// A set high bit means a flag byte follows. Flags only annotate values
-	// (resource names and such), so they are skipped.
-	if t&0x80 != 0 {
-		if c.version >= 3 {
-			t &= 0x3F
-		} else {
-			t &= 0x7F
-		}
+	case kv3TypeBooleanTrue:
+		return Kv3Value{Kind: Kv3KindBool, number: 1}, nil
 
-		if len(c.types) == 0 {
-			return 0, errKv3Truncated
-		}
-		c.types = c.types[1:]
-	}
+	case kv3TypeBooleanFalse:
+		return Kv3Value{Kind: Kv3KindBool}, nil
 
-	return t, nil
-}
+	case kv3TypeInt64Zero:
+		return Kv3Value{Kind: Kv3KindInt}, nil
 
-////////////////////////////////////////////////////////////////////////////////
+	case kv3TypeInt64One:
+		return Kv3Value{Kind: Kv3KindInt, number: 1}, nil
 
-// readChild reads the next child of an array or object. Object children
-// are preceded by a string table index for their name. When discard is set
-// the child is read but not stored.
-func (c *kv3Context) readChild(parent *Value, discard bool) error {
+	case kv3TypeDoubleZero:
+		return Kv3Value{Kind: Kv3KindFloat, number: math.Float64bits(0)}, nil
 
-	t, err := c.readType()
-	if err != nil {
-		return err
-	}
+	case kv3TypeDoubleOne:
+		return Kv3Value{Kind: Kv3KindFloat, number: math.Float64bits(1)}, nil
 
-	name := ""
-	if parent.Kind == KindObject {
-		id, err := takeInt32(&c.buffer.bytes4)
+	case kv3TypeBoolean:
+		value, err := d.buffer.bytes1.ReadUint8()
 		if err != nil {
-			return err
-		}
-		if name, err = c.getString(id); err != nil {
-			return err
+			return Kv3Value{}, err
 		}
 
-		if c.keep != nil && !c.keep[name] {
-			discard = true
+		result := Kv3Value{Kind: Kv3KindBool}
+		if value == 1 {
+			result.number = 1
 		}
-	}
 
-	value, err := c.readValue(t, discard)
-	if err != nil {
-		return err
-	}
+		return result, nil
 
-	if !discard {
-		parent.children = append(parent.children, Field{Name: name, Value: value})
-	}
-	return nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// readValue reads one value of type t. When discard is set, containers are
-// walked without storing their children, since the result is thrown away.
-func (c *kv3Context) readValue(t byte, discard bool) (Value, error) {
-
-	b := c.buffer
-
-	switch t {
-
-	// Values encoded in the type alone
-	case kv3Null:
-		return Value{Kind: KindNull}, nil
-	case kv3BooleanTrue:
-		return Value{Kind: KindBool, bits: 1}, nil
-	case kv3BooleanFalse:
-		return Value{Kind: KindBool}, nil
-	case kv3Int64Zero:
-		return Value{Kind: KindInt}, nil
-	case kv3Int64One:
-		return Value{Kind: KindInt, bits: 1}, nil
-	case kv3DoubleZero:
-		return Value{Kind: KindFloat, bits: math.Float64bits(0)}, nil
-	case kv3DoubleOne:
-		return Value{Kind: KindFloat, bits: math.Float64bits(1)}, nil
-
-	// 1 byte values
-	case kv3Boolean:
-		v, err := take(&b.bytes1, 1)
+	case kv3TypeInt32AsByte:
+		value, err := d.buffer.bytes1.ReadUint8()
 		if err != nil {
-			return Value{}, err
+			return Kv3Value{}, err
 		}
-		if v[0] == 1 {
-			return Value{Kind: KindBool, bits: 1}, nil
-		}
-		return Value{Kind: KindBool}, nil
-	case kv3Int32AsByte:
-		v, err := take(&b.bytes1, 1)
-		return Value{Kind: KindInt, bits: uint64(le8(v))}, err
 
-	// 2 byte values
-	case kv3Int16:
-		v, err := take(&b.bytes2, 2)
-		return Value{Kind: KindInt, bits: uint64(int64(int16(le16(v))))}, err
-	case kv3UInt16:
-		v, err := take(&b.bytes2, 2)
-		return Value{Kind: KindUInt, bits: uint64(le16(v))}, err
+		return Kv3Value{Kind: Kv3KindInt, number: uint64(value)}, nil
 
-	// 4 byte values
-	case kv3Int32:
-		v, err := take(&b.bytes4, 4)
-		return Value{Kind: KindInt, bits: uint64(int64(int32(le32(v))))}, err
-	case kv3UInt32:
-		v, err := take(&b.bytes4, 4)
-		return Value{Kind: KindUInt, bits: uint64(le32(v))}, err
-	case kv3Float:
-		v, err := take(&b.bytes4, 4)
-		f := float64(math.Float32frombits(le32(v)))
-		return Value{Kind: KindFloat, bits: math.Float64bits(f)}, err
-
-	// 8 byte values
-	case kv3Int64:
-		v, err := take(&b.bytes8, 8)
-		return Value{Kind: KindInt, bits: le64(v)}, err
-	case kv3UInt64:
-		v, err := take(&b.bytes8, 8)
-		return Value{Kind: KindUInt, bits: le64(v)}, err
-	case kv3Double:
-		v, err := take(&b.bytes8, 8)
-		return Value{Kind: KindFloat, bits: le64(v)}, err
-
-	case kv3String:
-		id, err := takeInt32(&b.bytes4)
+	case kv3TypeInt16:
+		value, err := d.buffer.bytes2.ReadUint16()
 		if err != nil {
-			return Value{}, err
+			return Kv3Value{}, err
 		}
-		s, err := c.getString(id)
-		return Value{Kind: KindString, str: s}, err
 
-	case kv3BinaryBlob:
-		return c.readBlob()
+		return Kv3Value{Kind: Kv3KindInt, number: uint64(int64(int16(value)))}, nil
 
-	case kv3Array:
-		n, err := takeInt32(&b.bytes4)
+	case kv3TypeUint16:
+		value, err := d.buffer.bytes2.ReadUint16()
 		if err != nil {
-			return Value{}, err
+			return Kv3Value{}, err
 		}
-		return c.readContainer(KindArray, n, discard)
 
-	case kv3ArrayTyped, kv3ArrayByteLength:
-		var n int
-		var err error
-		if t == kv3ArrayByteLength {
-			v, err := take(&b.bytes1, 1)
-			if err != nil {
-				return Value{}, err
-			}
-			n = int(v[0])
-		} else {
-			if n, err = takeInt32(&b.bytes4); err != nil {
-				return Value{}, err
-			}
-		}
-		return c.readTypedArray(n, false, discard)
+		return Kv3Value{Kind: Kv3KindUint, number: uint64(value)}, nil
 
-	case kv3ArrayAuxiliary:
-		v, err := take(&b.bytes1, 1)
+	case kv3TypeInt32:
+		value, err := d.buffer.bytes4.ReadUint32()
 		if err != nil {
-			return Value{}, err
+			return Kv3Value{}, err
 		}
-		return c.readTypedArray(int(v[0]), true, discard)
 
-	case kv3Object:
-		var n int
-		var err error
-		if c.version >= 5 {
-			n, err = takeInt32(&c.objectLengths)
-		} else {
-			n, err = takeInt32(&b.bytes4)
-		}
+		return Kv3Value{Kind: Kv3KindInt, number: uint64(int64(int32(value)))}, nil
+
+	case kv3TypeUint32:
+		value, err := d.buffer.bytes4.ReadUint32()
 		if err != nil {
-			return Value{}, err
+			return Kv3Value{}, err
 		}
-		return c.readContainer(KindObject, n, discard)
+
+		return Kv3Value{Kind: Kv3KindUint, number: uint64(value)}, nil
+
+	case kv3TypeFloat:
+		value, err := d.buffer.bytes4.ReadUint32()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		number := float64(math.Float32frombits(value))
+		return Kv3Value{Kind: Kv3KindFloat, number: math.Float64bits(number)}, nil
+
+	case kv3TypeInt64:
+		value, err := d.buffer.bytes8.ReadUint64()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		return Kv3Value{Kind: Kv3KindInt, number: value}, nil
+
+	case kv3TypeUint64:
+		value, err := d.buffer.bytes8.ReadUint64()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		return Kv3Value{Kind: Kv3KindUint, number: value}, nil
+
+	case kv3TypeDouble:
+		value, err := d.buffer.bytes8.ReadUint64()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		return Kv3Value{Kind: Kv3KindFloat, number: value}, nil
 
 	default:
-		return Value{}, errors.New(
+		return Kv3Value{}, errors.New(
 			"unknown kv3 type",
-			errors.Uint8("type", t),
+			errors.Uint8("type", nodeType),
 		)
 	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (c *kv3Context) readBlob() (Value, error) {
+// readBlob reads a blob. Blob lengths are in a list of their own
+// and the bytes are in the blob data.
+func (d *kv3Decoder) readBlob() (Kv3Value, error) {
 
-	var length int
-	var err error
-
-	if c.version < 2 {
-		length, err = takeInt32(&c.buffer.bytes4)
-	} else {
-		length, err = takeInt32(&c.blobLengths)
-	}
+	length, err := d.blobLengths.ReadInt32()
 	if err != nil {
-		return Value{}, err
+		return Kv3Value{}, err
 	}
 
-	// Non-positive lengths are empty blobs, as in VRF
+	// Lengths of zero or less are empty blobs, as in VRF
 	if length <= 0 {
-		return Value{Kind: KindBlob, blob: []byte{}}, nil
+		return Kv3Value{Kind: Kv3KindBlob, blob: []byte{}}, nil
 	}
 
-	var data []byte
-	if c.version < 2 {
-		data, err = take(&c.buffer.bytes1, length)
-	} else {
-		data, err = take(&c.blobs, length)
+	data, err := d.blobs.ReadBytes(int(length))
+	if err != nil {
+		return Kv3Value{}, err
 	}
-	return Value{Kind: KindBlob, blob: data}, err
+
+	return Kv3Value{Kind: Kv3KindBlob, blob: data}, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// readContainer reads the children of an array or object. Each child has
-// its own type.
-func (c *kv3Context) readContainer(kind Kind, n int, discard bool) (Value, error) {
+// readArray reads an array whose elements each have their own
+// type.
+func (d *kv3Decoder) readArray(length int, discard bool) (Kv3Value, error) {
 
-	if n < 0 {
-		return Value{}, errors.New("kv3 container length is negative")
+	err := d.enterContainer(length)
+	if err != nil {
+		return Kv3Value{}, err
 	}
+	defer d.leaveContainer()
 
-	value := Value{Kind: kind}
+	result := Kv3Value{Kind: Kv3KindArray}
 
-	// Every child needs at least one type byte, which bounds the allocation
+	// Every element has a type byte, which bounds the allocation
 	if !discard {
-		value.children = make([]Field, 0, min(n, len(c.types)))
+		result.elements = make([]Kv3Value, 0, min(length, d.types.GetRemaining()))
 	}
 
-	for i := 0; i < n; i++ {
-		if err := c.readChild(&value, discard); err != nil {
-			return Value{}, err
+	for i := 0; i < length; i++ {
+		nodeType, err := d.readType()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		element, err := d.readValue(nodeType, discard)
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		if !discard {
+			result.elements = append(result.elements, element)
 		}
 	}
-	return value, nil
+
+	return result, nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// readTypedArray reads an array whose elements all share one type. The
-// auxiliary variant reads its elements from the other value buffer.
-func (c *kv3Context) readTypedArray(n int, auxiliary, discard bool) (Value, error) {
+// readTypedArray reads an array whose elements share one type.
+// Auxiliary arrays read their elements from the other buffer.
+func (d *kv3Decoder) readTypedArray(length int, auxiliary, discard bool) (Kv3Value, error) {
 
-	if n < 0 {
-		return Value{}, errors.New("kv3 array length is negative")
-	}
+	//----------------------------------------------------------------------------//
 
-	t, err := c.readType()
+	err := d.enterContainer(length)
 	if err != nil {
-		return Value{}, err
+		return Kv3Value{}, err
+	}
+	defer d.leaveContainer()
+
+	nodeType, err := d.readType()
+	if err != nil {
+		return Kv3Value{}, err
 	}
 
 	if auxiliary {
-		if c.auxiliary == nil {
-			return Value{}, errors.New("kv3 auxiliary array without an auxiliary buffer")
+		if d.auxiliary == nil {
+			return Kv3Value{}, errors.New("kv3 auxiliary array without an auxiliary buffer")
 		}
-		c.buffer, c.auxiliary = c.auxiliary, c.buffer
-		defer func() { c.buffer, c.auxiliary = c.auxiliary, c.buffer }()
+
+		d.buffer, d.auxiliary = d.auxiliary, d.buffer
+		defer func() { d.buffer, d.auxiliary = d.auxiliary, d.buffer }()
 	}
 
-	value := Value{Kind: KindArray}
+	//----------------------------------------------------------------------------//
 
-	// Cap the preallocation so a corrupt length cannot exhaust memory
+	result := Kv3Value{Kind: Kv3KindArray}
+
+	// Elements need not use any bytes, so the length alone
+	// cannot be trusted for the allocation
 	if !discard {
-		value.children = make([]Field, 0, min(n, 1<<20))
+		result.elements = make([]Kv3Value, 0, min(length, kv3MaxPreallocate))
 	}
 
-	for i := 0; i < n; i++ {
-		element, err := c.readValue(t, discard)
+	for i := 0; i < length; i++ {
+		element, err := d.readValue(nodeType, discard)
 		if err != nil {
-			return Value{}, err
+			return Kv3Value{}, err
 		}
+
 		if !discard {
-			value.children = append(value.children, Field{Value: element})
+			result.elements = append(result.elements, element)
 		}
 	}
-	return value, nil
+
+	return result, nil
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (c *kv3Context) getString(id int) (string, error) {
+// readObject reads an object. Each field has its own type and a
+// string table index for its name. Fields that are not in `keep`
+// are read but not stored.
+func (d *kv3Decoder) readObject(length int, discard bool) (Kv3Value, error) {
 
-	if id == -1 {
-		return "", nil
+	//----------------------------------------------------------------------------//
+
+	err := d.enterContainer(length)
+	if err != nil {
+		return Kv3Value{}, err
 	}
-	if id < 0 || id >= len(c.strings) {
-		return "", errors.New(
-			"kv3 string index is out of range",
-			errors.Int("index", id),
+	defer d.leaveContainer()
+
+	result := Kv3Value{Kind: Kv3KindObject}
+
+	// Every field has a type byte, which bounds the allocation
+	if !discard {
+		result.fields = make([]Kv3Field, 0, min(length, d.types.GetRemaining()))
+	}
+
+	//----------------------------------------------------------------------------//
+
+	for i := 0; i < length; i++ {
+		nodeType, err := d.readType()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		index, err := d.buffer.bytes4.ReadInt32()
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		name, err := d.getString(index)
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		skip := discard || (d.keep != nil && !d.keep[name])
+
+		value, err := d.readValue(nodeType, skip)
+		if err != nil {
+			return Kv3Value{}, err
+		}
+
+		if !skip {
+			result.fields = append(result.fields, Kv3Field{Name: name, Value: value})
+		}
+	}
+
+	return result, nil
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// enterContainer checks the length of an array or object and
+// how deeply it is nested. Each call must be paired with a call
+// to `leaveContainer`.
+func (d *kv3Decoder) enterContainer(length int) error {
+
+	if length < 0 {
+		return errors.New(
+			"kv3 container length is negative",
+			errors.Int("length", length),
 		)
 	}
-	return c.strings[id], nil
+
+	if d.depth >= kv3MaxDepth {
+		return errors.New(
+			"kv3 values are nested too deeply",
+			errors.Int("depth", d.depth),
+		)
+	}
+
+	d.depth++
+	return nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Helpers
-////////////////////////////////////////////////////////////////////////////////
 
-// kv3HeaderReader reads little endian header fields and remembers the first
-// error, so the header can be read as a flat list of fields.
-type kv3HeaderReader struct {
-	data []byte
-	pos  int
-	err  error
+func (d *kv3Decoder) leaveContainer() {
+	d.depth--
 }
-
-func (r *kv3HeaderReader) next(n int) []byte {
-
-	if r.err != nil {
-		return nil
-	}
-	if len(r.data)-r.pos < n {
-		r.err = errKv3Truncated
-		return nil
-	}
-	b := r.data[r.pos : r.pos+n]
-	r.pos += n
-	return b
-}
-
-func (r *kv3HeaderReader) skip(n int) { r.next(n) }
-
-func (r *kv3HeaderReader) uint16() uint16 {
-
-	if b := r.next(2); b != nil {
-		return binary.LittleEndian.Uint16(b)
-	}
-	return 0
-}
-
-func (r *kv3HeaderReader) uint32() uint32 {
-
-	if b := r.next(4); b != nil {
-		return binary.LittleEndian.Uint32(b)
-	}
-	return 0
-}
-
-func (r *kv3HeaderReader) int32() int { return int(int32(r.uint32())) }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// splitKv3Buffers slices the 1, 2, 4 and 8 byte value arrays out of buf,
-// aligning each to its element size.
-func splitKv3Buffers(buf []byte, offset *int, b *kv3Buffers, count1, count2, count4, count8 int) error {
+// getString returns an entry of the string table. An index of
+// -1 is an empty string.
+func (d *kv3Decoder) getString(index int32) (string, error) {
+
+	if index == -1 {
+		return "", nil
+	}
+
+	if index < 0 || int(index) >= len(d.strings) {
+		return "", errors.New(
+			"kv3 string index is out of range",
+			errors.Int32("index", index),
+		)
+	}
+
+	return d.strings[index], nil
+}
+
+//----------------------------------------------------------------------------//
+// Helpers                                                                    //
+//----------------------------------------------------------------------------//
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readKv3Int32 reads a signed header field. The caller checks
+// the header is long enough.
+func readKv3Int32(data []byte, offset int) int {
+	return int(int32(binary.LittleEndian.Uint32(data[offset : offset+4])))
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readKv3Arrays slices the 1, 2, 4 and 8 byte value arrays out of
+// a buffer, in that order.
+func readKv3Arrays(reader *binaryReader, header kv3BufferHeader) (*kv3Buffers, error) {
 
 	var err error
+	result := &kv3Buffers{}
 
-	if count1 > 0 {
-		if b.bytes1, err = sliceAt(buf, *offset, count1); err != nil {
-			return err
-		}
-		*offset += count1
+	result.bytes1, err = readKv3Array(reader, header.count1, 1)
+	if err != nil {
+		return nil, err
 	}
 
-	if count2 > 0 {
-		*offset = align(*offset, 2)
-		if b.bytes2, err = sliceAt(buf, *offset, count2*2); err != nil {
-			return err
-		}
-		*offset += count2 * 2
+	result.bytes2, err = readKv3Array(reader, header.count2, 2)
+	if err != nil {
+		return nil, err
 	}
 
-	if count4 > 0 {
-		*offset = align(*offset, 4)
-		if b.bytes4, err = sliceAt(buf, *offset, count4*4); err != nil {
-			return err
-		}
-		*offset += count4 * 4
+	result.bytes4, err = readKv3Array(reader, header.count4, 4)
+	if err != nil {
+		return nil, err
 	}
 
-	if count8 > 0 {
-		*offset = align(*offset, 8)
-		if b.bytes8, err = sliceAt(buf, *offset, count8*8); err != nil {
-			return err
+	result.bytes8, err = readKv3Array(reader, header.count8, 8)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readKv3Array reads `count` values of `size` bytes each. The
+// array starts at a multiple of the value size, but empty arrays
+// are not aligned.
+func readKv3Array(reader *binaryReader, count, size int) (binaryReader, error) {
+
+	if count == 0 {
+		return binaryReader{}, nil
+	}
+
+	reader.Align(size)
+
+	data, err := reader.ReadBytes(count * size)
+	if err != nil {
+		return binaryReader{}, err
+	}
+
+	return binaryReader{data: data}, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readKv3Strings reads the string table. The number of strings
+// is the first 4 byte value, and the strings themselves are null
+// terminated.
+func readKv3Strings(bytes4, source *binaryReader) ([]string, error) {
+
+	count, err := bytes4.ReadInt32()
+	if err != nil {
+		return nil, err
+	}
+
+	// Every string takes at least its terminator, which bounds
+	// the allocation
+	if count < 0 || int(count) > source.GetRemaining() {
+		return nil, errors.New(
+			"invalid kv3 string count",
+			errors.Int32("count", count),
+		)
+	}
+
+	result := make([]string, count)
+
+	for i := range result {
+		result[i], err = source.ReadString()
+		if err != nil {
+			return nil, err
 		}
-		*offset += count8 * 8
+	}
+
+	return result, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func readKv3Trailer(reader *binaryReader) error {
+
+	trailer, err := reader.ReadUint32()
+	if err != nil {
+		return err
+	}
+
+	if trailer != kv3Trailer {
+		return errors.New(
+			"unexpected kv3 trailer",
+			errors.Uint32("trailer", trailer),
+		)
 	}
 
 	return nil
@@ -1183,136 +1328,23 @@ func splitKv3Buffers(buf []byte, offset *int, b *kv3Buffers, count1, count2, cou
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// readKv3TypesEnd handles what follows the types: a trailer when there are
-// no blobs, otherwise the blob size lists, which are returned.
-func readKv3TypesEnd(buf []byte, offset, countBlocks int) ([]byte, error) {
+func decodeZstdFrame(zd *zstd.Decoder, source []byte, size int) ([]byte, error) {
 
-	if offset > len(buf) {
-		return nil, errKv3Truncated
-	}
-	if countBlocks == 0 {
-		return nil, expectTrailer(buf[offset:])
-	}
-	return buf[offset:], nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func zstdDecode(zd *zstd.Decoder, src []byte, size int) ([]byte, error) {
-
-	out, err := zd.DecodeAll(src, make([]byte, 0, size))
+	output, err := zd.DecodeAll(source, make([]byte, 0, size))
 	if err != nil {
 		return nil, errors.New(
 			"failed to decompress zstd frame",
 			errors.Error("error", err),
 		)
 	}
-	if len(out) != size {
+
+	if len(output) != size {
 		return nil, errors.New(
 			"unexpected zstd decoded size",
-			errors.Int("decoded", len(out)),
+			errors.Int("decoded", len(output)),
 			errors.Int("expected", size),
 		)
 	}
-	return out, nil
-}
 
-////////////////////////////////////////////////////////////////////////////////
-
-func expectTrailer(b []byte) error {
-
-	if len(b) < 4 {
-		return errKv3Truncated
-	}
-	if trailer := binary.LittleEndian.Uint32(b); trailer != kv3Trailer {
-		return errors.New(
-			"unexpected kv3 trailer",
-			errors.Uint32("trailer", trailer),
-		)
-	}
-	return nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func sliceAt(b []byte, offset, n int) ([]byte, error) {
-
-	if offset < 0 || n < 0 || offset > len(b) || n > len(b)-offset {
-		return nil, errKv3Truncated
-	}
-	return b[offset : offset+n], nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// take removes and returns the first n bytes of *b.
-func take(b *[]byte, n int) ([]byte, error) {
-
-	if n < 0 || len(*b) < n {
-		return nil, errKv3Truncated
-	}
-	out := (*b)[:n]
-	*b = (*b)[n:]
-	return out, nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func takeInt32(b *[]byte) (int, error) {
-
-	v, err := take(b, 4)
-	if err != nil {
-		return 0, err
-	}
-	return int(int32(le32(v))), nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// takeCString removes a null terminated string from the front of *b.
-func takeCString(b *[]byte) (string, error) {
-
-	end := bytes.IndexByte(*b, 0)
-	if end < 0 {
-		return "", errors.New("kv3 string is not terminated")
-	}
-	s := string((*b)[:end])
-	*b = (*b)[end+1:]
-	return s, nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func align(offset, alignment int) int {
-	return (offset + alignment - 1) &^ (alignment - 1)
-}
-
-// Little endian readers that tolerate the short slices returned alongside
-// an error, so callers can build a value and return the error together
-func le8(b []byte) byte {
-	if len(b) < 1 {
-		return 0
-	}
-	return b[0]
-}
-
-func le16(b []byte) uint16 {
-	if len(b) < 2 {
-		return 0
-	}
-	return binary.LittleEndian.Uint16(b)
-}
-
-func le32(b []byte) uint32 {
-	if len(b) < 4 {
-		return 0
-	}
-	return binary.LittleEndian.Uint32(b)
-}
-
-func le64(b []byte) uint64 {
-	if len(b) < 8 {
-		return 0
-	}
-	return binary.LittleEndian.Uint64(b)
+	return output, nil
 }

@@ -1,13 +1,11 @@
 // Command extractor converts the collision geometry of a CS2 map VPK into a
-// `.tri` file for Oasis. It is a Go reimplementation of CS2-Phys-Extractor
-// and produces byte for byte identical output.
+// `.tri` file for Oasis. The hull and mesh conversion is based on
+// CS2-Phys-Extractor, and spheres and capsules are added as triangles.
 //
 // Usage: extractor [-debug] [-json] <input.vpk> <output-dir>
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -29,9 +27,11 @@ type exitCodeType int
 const (
 	exitCodeSuccess exitCodeType = iota
 	exitCodeParseArgs
+	exitCodeReadVpk
+	exitCodeNoWorldPhysics
 	exitCodeCreateOutput
 	exitCodeCreateDecoder
-	exitCodeExtract
+	exitCodeConvertMap
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -106,7 +106,55 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
-	err := os.MkdirAll(outDir, 0o755)
+	logger.Info(
+		"reading vpk",
+		logger.String("path", vpkPath),
+	)
+
+	file, err := os.Open(vpkPath)
+	if err != nil {
+		logger.Err(
+			"failed to open vpk",
+			logger.String("path", vpkPath),
+			logger.Error("error", err),
+		)
+		os.Exit(int(exitCodeReadVpk))
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		logger.Err(
+			"failed to get vpk size",
+			logger.String("path", vpkPath),
+			logger.Error("error", err),
+		)
+		os.Exit(int(exitCodeReadVpk))
+	}
+
+	vpk, err := ReadVpk(file, info.Size())
+	if err != nil {
+		logger.Err(
+			"failed to read vpk",
+			logger.String("path", vpkPath),
+			logger.Error("error", err),
+		)
+		os.Exit(int(exitCodeReadVpk))
+	}
+
+	// Vanity and settings VPKs in the maps folder have no world
+	// physics, so they get an exit code of their own
+	entries := findWorldPhysics(vpk)
+	if len(entries) == 0 {
+		logger.Err(
+			"vpk has no world physics",
+			logger.String("path", vpkPath),
+		)
+		os.Exit(int(exitCodeNoWorldPhysics))
+	}
+
+	//----------------------------------------------------------------------------//
+
+	err = os.MkdirAll(outDir, 0o755)
 	if err != nil {
 		logger.Err(
 			"failed to create output directory",
@@ -116,7 +164,8 @@ func main() {
 		os.Exit(int(exitCodeCreateOutput))
 	}
 
-	// Version 5 KV3 blocks hold three zstd frames that are decoded at once
+	// Version 5 KV3 blocks hold three zstd frames that are
+	// decoded at the same time
 	zd, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(3))
 	if err != nil {
 		logger.Err(
@@ -128,16 +177,29 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
-	err = processVpkFile(vpkPath, outDir, zd)
-	zd.Close()
+	// Every map is converted even if an earlier one fails, so a
+	// single run reports all failures
+	failed := false
 
-	if err != nil {
-		logger.Err(
-			"failed to extract vpk",
-			logger.String("path", vpkPath),
-			logger.Error("error", err),
-		)
-		os.Exit(int(exitCodeExtract))
+	for _, entry := range entries {
+		mapName := getMapName(entry)
+
+		err := convertWorldPhysics(vpk, entry, mapName, outDir, zd)
+		if err != nil {
+			logger.Err(
+				"failed to convert map",
+				logger.String("map", mapName),
+				logger.Error("error", err),
+			)
+			failed = true
+		}
+	}
+
+	zd.Close()
+	file.Close()
+
+	if failed {
+		os.Exit(int(exitCodeConvertMap))
 	}
 
 	//----------------------------------------------------------------------------//
@@ -145,178 +207,71 @@ func main() {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func processVpkFile(vpkPath, outDir string, zd *zstd.Decoder) error {
+// findWorldPhysics returns the world physics entries of the maps
+// in a VPK. Official map VPKs hold exactly one, stored as
+// `maps/<name>/world_physics.vmdl_c`.
+func findWorldPhysics(vpk *Vpk) []*VpkEntry {
 
-	logger.Info(
-		"processing vpk",
-		logger.String("path", vpkPath),
-	)
+	var result []*VpkEntry
 
-	f, err := os.Open(vpkPath)
-	if err != nil {
-		return errors.New(
-			"failed to open vpk",
-			errors.Error("error", err),
-		)
-	}
-	defer f.Close()
+	for i := range vpk.Entries {
+		entry := &vpk.Entries[i]
 
-	pkg, err := ReadVpk(f)
-	if err != nil {
-		return errors.New(
-			"failed to read vpk",
-			errors.Error("error", err),
-		)
-	}
-
-	// Workshop maps nest the map VPK inside another VPK
-	if nested := pkg.GetExtension("vpk"); nested != nil {
-		var maps []*VpkEntry
-		for _, entry := range nested.Entries {
-			if strings.EqualFold(entry.Directory, "maps") {
-				maps = append(maps, entry)
-			}
-		}
-
-		if len(maps) > 0 {
-			return processNestedVpk(pkg, pickMainMapVpk(maps), outDir, zd)
-		}
-	}
-
-	return processMapVpk(pkg, outDir, zd)
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// pickMainMapVpk skips skybox VPKs and takes the shortest name, keeping the
-// first on ties, as the original does.
-func pickMainMapVpk(maps []*VpkEntry) *VpkEntry {
-
-	var best *VpkEntry
-
-	for _, entry := range maps {
-		name := strings.ToLower(entry.Name)
-		if strings.Contains(name, "_3dsky") || strings.Contains(name, "_skybox") || strings.Contains(name, "_sky") {
+		if entry.Extension != "vmdl_c" || entry.Name != "world_physics" {
 			continue
 		}
-		if best == nil || len(entry.Name) < len(best.Name) {
-			best = entry
+
+		if getMapName(entry) == "" {
+			logger.Warn(
+				"skipping world physics outside a map directory",
+				logger.String("directory", entry.Directory),
+			)
+			continue
 		}
+
+		result = append(result, entry)
 	}
 
-	if best == nil {
-		best = maps[0]
-	}
-	return best
+	return result
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func processNestedVpk(parent *Vpk, entry *VpkEntry, outDir string, zd *zstd.Decoder) error {
+// getMapName returns the name of the map a world physics entry
+// belongs to. It returns an empty string when the entry is not
+// in `maps/<name>` or the name is not safe to use as a file name.
+func getMapName(entry *VpkEntry) string {
 
-	data, err := parent.ReadEntry(entry)
-	if err != nil {
-		return errors.New(
-			"failed to extract nested vpk",
-			errors.String("name", entry.Name),
-			errors.Error("error", err),
-		)
+	name, found := strings.CutPrefix(entry.Directory, "maps/")
+	if !found || name == "" {
+		return ""
 	}
 
-	nested, err := ReadVpk(bytes.NewReader(data))
-	if err != nil {
-		return errors.New(
-			"failed to read nested vpk",
-			errors.String("name", entry.Name),
-			errors.Error("error", err),
-		)
+	// The name becomes the output file name, so only characters
+	// that cannot form a path are allowed
+	for _, c := range name {
+		isLetter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		isDigit := c >= '0' && c <= '9'
+
+		if !isLetter && !isDigit && c != '_' && c != '-' {
+			return ""
+		}
 	}
 
-	return processMapVpk(nested, outDir, zd)
+	return name
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func processMapVpk(pkg *Vpk, outDir string, zd *zstd.Decoder) error {
-
-	//----------------------------------------------------------------------------//
-
-	var groups []*VpkExtension
-	for i := range pkg.Extensions {
-		if strings.EqualFold(pkg.Extensions[i].Name, "vmdl_c") {
-			groups = append(groups, &pkg.Extensions[i])
-		}
-	}
-
-	//----------------------------------------------------------------------------//
-
-	found := false
-	var errs []error
-
-	for _, group := range groups {
-		for _, entry := range group.Entries {
-			if !strings.Contains(strings.ToLower(entry.Name), "world_physics") {
-				continue
-			}
-
-			mapName := extractMapName(entry)
-			if mapName == "" {
-				continue
-			}
-
-			found = true
-
-			err := processWorldPhysics(pkg, entry, mapName, outDir, zd)
-			if err != nil {
-				err = errors.New(
-					"failed to convert map",
-					errors.String("map", mapName),
-					errors.Error("error", err),
-				)
-				errs = append(errs, err)
-			}
-		}
-	}
-
-	//----------------------------------------------------------------------------//
-
-	if len(errs) > 0 {
-		return errors.Join(errs...)
-	}
-
-	if !found {
-		return errors.New("vpk has no world physics")
-	}
-
-	return nil
-
-	//----------------------------------------------------------------------------//
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// extractMapName takes the directory after "maps" in the entry's path, for
-// example "maps/de_dust2" gives "de_dust2".
-func extractMapName(entry *VpkEntry) string {
-
-	if entry.Directory != "" {
-		parts := strings.Split(strings.ReplaceAll(entry.Directory, `\`, "/"), "/")
-		for i, part := range parts {
-			if strings.EqualFold(part, "maps") && i+1 < len(parts) {
-				return parts[i+1]
-			}
-		}
-		return parts[len(parts)-1]
-	}
-
-	name := strings.ReplaceAll(entry.Name, "world_physics", "")
-	name = strings.ReplaceAll(name, ".vmdl_c", "")
-	return strings.Trim(name, "_.")
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-func processWorldPhysics(pkg *Vpk, entry *VpkEntry, mapName, outDir string, zd *zstd.Decoder) error {
+// convertWorldPhysics decodes the physics of one map and writes
+// its collision triangles to `<outDir>/<mapName>.tri`.
+func convertWorldPhysics(
+	vpk *Vpk,
+	entry *VpkEntry,
+	mapName string,
+	outDir string,
+	zd *zstd.Decoder,
+) error {
 
 	//----------------------------------------------------------------------------//
 
@@ -325,45 +280,26 @@ func processWorldPhysics(pkg *Vpk, entry *VpkEntry, mapName, outDir string, zd *
 		logger.String("map", mapName),
 	)
 
+	// The physics are the PHYS block of the compiled model
 	start := time.Now()
 
-	data, err := pkg.ReadEntry(entry)
+	data, err := vpk.ReadEntry(entry)
 	if err != nil {
 		return errors.New(
 			"failed to read world physics",
 			errors.Error("error", err),
 		)
 	}
-	if len(data) == 0 {
-		return errors.New("world physics file is empty")
-	}
 
-	readTime := time.Since(start)
-
-	//----------------------------------------------------------------------------//
-
-	start = time.Now()
-
-	blocks, err := ReadResourceBlocks(data)
+	block, err := ReadResourceBlock(data, "PHYS")
 	if err != nil {
 		return errors.New(
-			"failed to read resource blocks",
+			"failed to read phys block",
 			errors.Error("error", err),
 		)
 	}
 
-	var physBlock *ResourceBlock
-	for i := range blocks {
-		if blocks[i].Type == "PHYS" {
-			physBlock = &blocks[i]
-			break
-		}
-	}
-	if physBlock == nil {
-		return errors.New("world physics has no phys block")
-	}
-
-	phys, err := DecodeKv3(physBlock.Data, PhysicsKeys, zd)
+	phys, err := DecodeKv3(block, PhysicsKeys, zd)
 	if err != nil {
 		return errors.New(
 			"failed to decode phys block",
@@ -375,38 +311,39 @@ func processWorldPhysics(pkg *Vpk, entry *VpkEntry, mapName, outDir string, zd *
 
 	//----------------------------------------------------------------------------//
 
-	// Triangles stream straight to the file instead of being collected
+	// Triangles stream to the file instead of being collected
 	start = time.Now()
-
 	path := filepath.Join(outDir, mapName+".tri")
 
-	out := &triFile{path: path}
-	result := ConvertPhysics(phys, out.write)
-
-	err = out.close()
+	writer, err := createTriWriter(path)
 	if err != nil {
-		return errors.New(
-			"failed to write tri file",
-			errors.String("path", path),
-			errors.Error("error", err),
-		)
+		return err
+	}
+
+	result := ConvertPhysics(phys, writer.Write)
+
+	if writer.GetCount() == 0 {
+		writer.Abort()
+		return errors.New("no collision triangles found")
+	}
+
+	err = writer.Commit()
+	if err != nil {
+		return err
 	}
 
 	convertTime := time.Since(start)
-
-	if result.Triangles == 0 {
-		return errors.New("no collision triangles found")
-	}
 
 	//----------------------------------------------------------------------------//
 
 	logger.Info(
 		"wrote tri file",
 		logger.String("path", path),
-		logger.Int("triangles", result.Triangles),
+		logger.Int("triangles", writer.GetCount()),
 		logger.Int("hulls", result.Hulls),
 		logger.Int("meshes", result.Meshes),
-		logger.Duration("read", readTime),
+		logger.Int("spheres", result.Spheres),
+		logger.Int("capsules", result.Capsules),
 		logger.Duration("decode", decodeTime),
 		logger.Duration("convert", convertTime),
 	)
@@ -414,50 +351,4 @@ func processWorldPhysics(pkg *Vpk, entry *VpkEntry, mapName, outDir string, zd *
 	return nil
 
 	//----------------------------------------------------------------------------//
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// triFile writes triangles to a `.tri` file through a buffer. The file is
-// created on the first triangle, so a map without collision triangles
-// leaves no file behind, as in the original.
-type triFile struct {
-	path string
-	file *os.File
-	buf  *bufio.Writer
-	err  error
-}
-
-func (t *triFile) write(v1, v2, v3 []byte) {
-
-	if t.err != nil {
-		return
-	}
-
-	if t.file == nil {
-		if t.file, t.err = os.Create(t.path); t.err != nil {
-			return
-		}
-		t.buf = bufio.NewWriterSize(t.file, 1<<20)
-	}
-
-	// `bufio.Writer` keeps the first write error, which `close` reports
-	t.buf.Write(v1)
-	t.buf.Write(v2)
-	t.buf.Write(v3)
-}
-
-func (t *triFile) close() error {
-
-	if t.file == nil {
-		return t.err
-	}
-
-	if t.err == nil {
-		t.err = t.buf.Flush()
-	}
-	if err := t.file.Close(); t.err == nil {
-		t.err = err
-	}
-	return t.err
 }

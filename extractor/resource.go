@@ -8,76 +8,81 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Header version of compiled Source 2 resources (files ending in `_c`).
-const resourceHeaderVersion = 12
+const (
+	// Header version of compiled resources (files ending in `_c`)
+	resourceHeaderVersion = 12
+
+	// Size of the resource header and of each block table entry
+	resourceHeaderSize     = 16
+	resourceBlockEntrySize = 12
+)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// ResourceBlock is one block of a compiled resource, such as PHYS or DATA.
-type ResourceBlock struct {
-	Type string
-	Data []byte
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// ReadResourceBlocks parses the block table of a compiled resource. Blocks
-// with a size of zero are skipped, as VRF does.
-func ReadResourceBlocks(data []byte) ([]ResourceBlock, error) {
+// ReadResourceBlock returns the data of the first block of the
+// given type, such as "PHYS" or "DATA", in a compiled resource.
+// Blocks with a size of zero are skipped, as VRF does.
+func ReadResourceBlock(data []byte, blockType string) ([]byte, error) {
 
 	//----------------------------------------------------------------------------//
 
-	if len(data) < 16 {
+	if len(data) < resourceHeaderSize {
 		return nil, errors.New(
 			"resource is too small",
 			errors.Int("size", len(data)),
 		)
 	}
 
-	headerVersion := binary.LittleEndian.Uint16(data[4:])
-	if headerVersion != resourceHeaderVersion {
+	version := binary.LittleEndian.Uint16(data[4:6])
+	if version != resourceHeaderVersion {
 		return nil, errors.New(
 			"unexpected resource header version",
-			errors.Uint16("version", headerVersion),
+			errors.Uint16("version", version),
 		)
 	}
 
-	// The block offset is relative to its own position (byte 8)
-	blockStart := 8 + int(binary.LittleEndian.Uint32(data[8:]))
-	blockCount := int(binary.LittleEndian.Uint32(data[12:]))
+	// The table offset is relative to the field that holds it
+	tableStart := 8 + int(binary.LittleEndian.Uint32(data[8:12]))
+	blockCount := int(binary.LittleEndian.Uint32(data[12:16]))
+
+	if tableStart+blockCount*resourceBlockEntrySize > len(data) {
+		return nil, errors.New(
+			"resource block table is out of bounds",
+			errors.Int("block_count", blockCount),
+		)
+	}
 
 	//----------------------------------------------------------------------------//
 
-	blocks := make([]ResourceBlock, 0, blockCount)
-
 	for i := 0; i < blockCount; i++ {
-		entry := blockStart + i*12
-		if entry < 0 || entry+12 > len(data) {
-			return nil, errors.New("resource block table is truncated")
+		entry := tableStart + i*resourceBlockEntrySize
+
+		if string(data[entry:entry+4]) != blockType {
+			continue
 		}
 
-		// Each block offset is relative to the position of the offset field
-		offset := entry + 4 + int(binary.LittleEndian.Uint32(data[entry+4:]))
-		size := int(binary.LittleEndian.Uint32(data[entry+8:]))
+		// Each block offset is relative to the field that holds it
+		offset := entry + 4 + int(binary.LittleEndian.Uint32(data[entry+4:entry+8]))
+		size := int(binary.LittleEndian.Uint32(data[entry+8 : entry+12]))
 
 		if size == 0 {
 			continue
 		}
 
-		if offset < 0 || offset+size > len(data) {
+		if offset+size > len(data) {
 			return nil, errors.New(
 				"resource block is out of bounds",
-				errors.Int("block", i),
+				errors.String("type", blockType),
 			)
 		}
 
-		blocks = append(blocks, ResourceBlock{
-			Type: string(data[entry : entry+4]),
-			Data: data[offset : offset+size],
-		})
+		return data[offset : offset+size], nil
 	}
 
-	return blocks, nil
+	return nil, errors.New(
+		"resource block not found",
+		errors.String("type", blockType),
+	)
 
 	//----------------------------------------------------------------------------//
 }

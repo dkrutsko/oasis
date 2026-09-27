@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
 	"hash/crc32"
 	"io"
@@ -12,12 +11,22 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
-	vpkMagic = 0x55AA1234
+	// Signature at the start of every VPK file
+	vpkSignature = 0x55AA1234
 
-	// Archive index meaning the entry data follows the directory tree in
-	// the same file rather than in a numbered archive file.
+	// Header sizes of version 1 and version 2 VPK files
+	vpkHeaderSizeV1 = 12
+	vpkHeaderSizeV2 = 28
+
+	// Size of a directory tree entry, not counting its name and
+	// the preload data that follows it
+	vpkEntrySize = 18
+
+	// Archive index meaning the entry data follows the directory
+	// tree in the same file rather than in a numbered archive
 	vpkSameArchive = 0x7FFF
 
+	// Value that ends every directory tree entry
 	vpkEntryTerminator = 0xFFFF
 )
 
@@ -36,50 +45,55 @@ type VpkEntry struct {
 	length       uint32
 }
 
-// VpkExtension groups the entries sharing one extension in tree order.
-// This mirrors the per-extension lists ValvePak exposes as `Entries`.
-type VpkExtension struct {
-	Name    string
-	Entries []*VpkEntry
-}
+////////////////////////////////////////////////////////////////////////////////
 
-// Vpk is a parsed VPK directory tree. Entry data is read on demand from the
-// underlying reader.
+// Vpk is a parsed VPK directory tree. Entry data is read on
+// demand from the underlying reader with `ReadEntry`.
 type Vpk struct {
-	Extensions []VpkExtension
+	Entries []VpkEntry
 
 	reader     io.ReaderAt
+	size       int64
 	dataOffset int64
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// ReadVpk parses the header and directory tree of a version 1 or 2 VPK.
-func ReadVpk(r io.ReaderAt) (*Vpk, error) {
+// ReadVpk parses the header and directory tree of a version 1
+// or 2 VPK. The size is that of the whole file and is used to
+// reject trees and entries that point past its end.
+func ReadVpk(r io.ReaderAt, size int64) (*Vpk, error) {
 
 	//----------------------------------------------------------------------------//
 
-	header := make([]byte, 28)
-	if _, err := r.ReadAt(header[:12], 0); err != nil {
+	// Read the fields both versions share
+	header := make([]byte, vpkHeaderSizeV1)
+
+	_, err := r.ReadAt(header, 0)
+	if err != nil {
 		return nil, errors.New(
 			"failed to read vpk header",
 			errors.Error("error", err),
 		)
 	}
 
-	if binary.LittleEndian.Uint32(header[0:]) != vpkMagic {
-		return nil, errors.New("file is not a vpk")
-	}
+	signature := binary.LittleEndian.Uint32(header[0:4])
+	version := binary.LittleEndian.Uint32(header[4:8])
+	treeSize := int64(binary.LittleEndian.Uint32(header[8:12]))
 
-	version := binary.LittleEndian.Uint32(header[4:])
-	treeSize := binary.LittleEndian.Uint32(header[8:])
+	if signature != vpkSignature {
+		return nil, errors.New(
+			"file is not a vpk",
+			errors.Uint32("signature", signature),
+		)
+	}
 
 	var headerSize int64
 	switch version {
 	case 1:
-		headerSize = 12
+		headerSize = vpkHeaderSizeV1
 	case 2:
-		headerSize = 28
+		headerSize = vpkHeaderSizeV2
 	default:
 		return nil, errors.New(
 			"unsupported vpk version",
@@ -89,26 +103,42 @@ func ReadVpk(r io.ReaderAt) (*Vpk, error) {
 
 	//----------------------------------------------------------------------------//
 
+	// Check the tree fits in the file before allocating it
+	if headerSize+treeSize > size {
+		return nil, errors.New(
+			"vpk tree is out of bounds",
+			errors.Int64("tree_size", treeSize),
+			errors.Int64("file_size", size),
+		)
+	}
+
 	tree := make([]byte, treeSize)
-	if _, err := r.ReadAt(tree, headerSize); err != nil {
+
+	_, err = r.ReadAt(tree, headerSize)
+	if err != nil {
 		return nil, errors.New(
 			"failed to read vpk tree",
-			errors.Uint32("tree_size", treeSize),
 			errors.Error("error", err),
 		)
 	}
 
-	extensions, consumed, err := parseVpkTree(tree)
+	entries, treeLength, err := parseVpkTree(tree)
 	if err != nil {
-		return nil, err
+		return nil, errors.New(
+			"failed to parse vpk tree",
+			errors.Error("error", err),
+		)
 	}
 
-	// ValvePak locates entry data using the size of the tree it actually
-	// parsed, so do the same here.
+	//----------------------------------------------------------------------------//
+
+	// Entry data starts after the tree that was actually parsed
+	// rather than the tree size in the header, as in ValvePak
 	return &Vpk{
-		Extensions: extensions,
+		Entries:    entries,
 		reader:     r,
-		dataOffset: headerSize + int64(consumed),
+		size:       size,
+		dataOffset: headerSize + int64(treeLength),
 	}, nil
 
 	//----------------------------------------------------------------------------//
@@ -116,41 +146,45 @@ func ReadVpk(r io.ReaderAt) (*Vpk, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// GetExtension returns the entries for an exact (case sensitive) extension,
-// or nil when the package has none.
-func (v *Vpk) GetExtension(name string) *VpkExtension {
-
-	for i := range v.Extensions {
-		if v.Extensions[i].Name == name {
-			return &v.Extensions[i]
-		}
-	}
-	return nil
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-// ReadEntry returns the full contents of an entry and verifies its CRC32,
-// matching ValvePak's default `ReadEntry` behavior.
+// ReadEntry returns the full contents of an entry and verifies
+// its CRC32. Only entries stored in the VPK itself are supported,
+// not ones in numbered archive files.
 func (v *Vpk) ReadEntry(entry *VpkEntry) ([]byte, error) {
 
 	//----------------------------------------------------------------------------//
 
-	data := make([]byte, len(entry.preload)+int(entry.length))
-	copy(data, entry.preload)
+	offset := v.dataOffset + int64(entry.offset)
+	length := int64(entry.length)
 
-	if entry.length > 0 {
+	// Check the data is in this file before allocating it
+	if length > 0 {
 		if entry.archiveIndex != vpkSameArchive {
 			return nil, errors.New(
-				"multi-file vpks are not supported",
+				"vpk entry is in a separate archive file",
 				errors.String("directory", entry.Directory),
 				errors.String("name", entry.Name),
 				errors.Uint16("archive_index", entry.archiveIndex),
 			)
 		}
 
-		offset := v.dataOffset + int64(entry.offset)
-		if _, err := v.reader.ReadAt(data[len(entry.preload):], offset); err != nil {
+		if offset+length > v.size {
+			return nil, errors.New(
+				"vpk entry is out of bounds",
+				errors.String("directory", entry.Directory),
+				errors.String("name", entry.Name),
+			)
+		}
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Preload data is stored in the tree and comes first
+	data := make([]byte, int64(len(entry.preload))+length)
+	copy(data, entry.preload)
+
+	if length > 0 {
+		_, err := v.reader.ReadAt(data[len(entry.preload):], offset)
+		if err != nil {
 			return nil, errors.New(
 				"failed to read vpk entry",
 				errors.String("directory", entry.Directory),
@@ -162,7 +196,8 @@ func (v *Vpk) ReadEntry(entry *VpkEntry) ([]byte, error) {
 
 	//----------------------------------------------------------------------------//
 
-	if actual := crc32.ChecksumIEEE(data); actual != entry.crc32 {
+	actual := crc32.ChecksumIEEE(data)
+	if actual != entry.crc32 {
 		return nil, errors.New(
 			"vpk entry crc32 mismatch",
 			errors.String("directory", entry.Directory),
@@ -179,25 +214,17 @@ func (v *Vpk) ReadEntry(entry *VpkEntry) ([]byte, error) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// parseVpkTree walks the extension, directory and file levels of the tree.
-// Each level ends with an empty string. It returns the bytes consumed.
-func parseVpkTree(tree []byte) ([]VpkExtension, int, error) {
+// parseVpkTree reads every entry in the directory tree and
+// returns the number of bytes the tree used. The tree groups
+// entries by extension, then by directory, and each level
+// ends with an empty string.
+func parseVpkTree(tree []byte) ([]VpkEntry, int, error) {
 
-	pos := 0
-	readString := func() (string, error) {
-		end := bytes.IndexByte(tree[pos:], 0)
-		if end < 0 {
-			return "", errors.New("vpk tree string is not terminated")
-		}
-		s := string(tree[pos : pos+end])
-		pos += end + 1
-		return s, nil
-	}
-
-	var extensions []VpkExtension
+	reader := &binaryReader{data: tree}
+	var entries []VpkEntry
 
 	for {
-		extension, err := readString()
+		extension, err := reader.ReadString()
 		if err != nil {
 			return nil, 0, err
 		}
@@ -205,10 +232,8 @@ func parseVpkTree(tree []byte) ([]VpkExtension, int, error) {
 			break
 		}
 
-		group := VpkExtension{Name: extension}
-
 		for {
-			directory, err := readString()
+			directory, err := reader.ReadString()
 			if err != nil {
 				return nil, 0, err
 			}
@@ -217,7 +242,7 @@ func parseVpkTree(tree []byte) ([]VpkExtension, int, error) {
 			}
 
 			for {
-				name, err := readString()
+				name, err := reader.ReadString()
 				if err != nil {
 					return nil, 0, err
 				}
@@ -225,44 +250,55 @@ func parseVpkTree(tree []byte) ([]VpkExtension, int, error) {
 					break
 				}
 
-				if len(tree)-pos < 18 {
-					return nil, 0, errors.New("vpk tree entry is truncated")
+				entry, err := readVpkEntry(reader)
+				if err != nil {
+					return nil, 0, err
 				}
 
-				entry := &VpkEntry{
-					Extension:    extension,
-					Directory:    directory,
-					Name:         name,
-					crc32:        binary.LittleEndian.Uint32(tree[pos:]),
-					archiveIndex: binary.LittleEndian.Uint16(tree[pos+6:]),
-					offset:       binary.LittleEndian.Uint32(tree[pos+8:]),
-					length:       binary.LittleEndian.Uint32(tree[pos+12:]),
-				}
-				preloadSize := int(binary.LittleEndian.Uint16(tree[pos+4:]))
-				terminator := binary.LittleEndian.Uint16(tree[pos+16:])
-				pos += 18
+				entry.Extension = extension
+				entry.Directory = directory
+				entry.Name = name
 
-				if terminator != vpkEntryTerminator {
-					return nil, 0, errors.New(
-						"invalid vpk entry terminator",
-						errors.Uint16("terminator", terminator),
-					)
-				}
-
-				if preloadSize > 0 {
-					if len(tree)-pos < preloadSize {
-						return nil, 0, errors.New("vpk preload data is truncated")
-					}
-					entry.preload = tree[pos : pos+preloadSize]
-					pos += preloadSize
-				}
-
-				group.Entries = append(group.Entries, entry)
+				entries = append(entries, entry)
 			}
 		}
-
-		extensions = append(extensions, group)
 	}
 
-	return extensions, pos, nil
+	return entries, reader.GetPosition(), nil
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readVpkEntry reads the fixed part of a tree entry and the
+// preload data that follows it.
+func readVpkEntry(reader *binaryReader) (VpkEntry, error) {
+
+	data, err := reader.ReadBytes(vpkEntrySize)
+	if err != nil {
+		return VpkEntry{}, err
+	}
+
+	entry := VpkEntry{
+		crc32:        binary.LittleEndian.Uint32(data[0:4]),
+		archiveIndex: binary.LittleEndian.Uint16(data[6:8]),
+		offset:       binary.LittleEndian.Uint32(data[8:12]),
+		length:       binary.LittleEndian.Uint32(data[12:16]),
+	}
+
+	preloadSize := int(binary.LittleEndian.Uint16(data[4:6]))
+	terminator := binary.LittleEndian.Uint16(data[16:18])
+
+	if terminator != vpkEntryTerminator {
+		return VpkEntry{}, errors.New(
+			"invalid vpk entry terminator",
+			errors.Uint16("terminator", terminator),
+		)
+	}
+
+	entry.preload, err = reader.ReadBytes(preloadSize)
+	if err != nil {
+		return VpkEntry{}, err
+	}
+
+	return entry, nil
 }
