@@ -201,6 +201,12 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		return result
 	}
 
+	offPawnIsAlive, ok := g.GetOffsetsInt("client_dll", "client.dll", "classes", "CCSPlayerController", "fields", "m_bPawnIsAlive")
+	if !ok {
+		result.Result = ActionResultNoOffset
+		return result
+	}
+
 	//----------------------------------------------------------------------------//
 
 	// Check if the player is currently in-game
@@ -286,12 +292,14 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 
 	//----------------------------------------------------------------------------//
 
-	// Pass 2: Read pawn handles from valid controllers
+	// Pass 2: Read pawn handles and alive state from valid
+	// controllers
 	scatter.Clear(pid, leech.ScatterFlagDefault)
 
 	for e := 0; e < 64; e++ {
 		if controllers[e] != 0 {
 			scatter.Prepare(controllers[e]+offPawnHandle, 4)
+			scatter.Prepare(controllers[e]+offPawnIsAlive, 1)
 		}
 	}
 
@@ -306,6 +314,14 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 
 	for e := 0; e < 64; e++ {
 		if controllers[e] == 0 {
+			continue
+		}
+
+		// Pawns of dead and disconnected players never become
+		// entities, and reading their stale memory made pass 5
+		// several times slower, so they are skipped here
+		alive, _ := scatter.Read(controllers[e]+offPawnIsAlive, 1)
+		if len(alive) != 1 || alive[0] == 0 {
 			continue
 		}
 

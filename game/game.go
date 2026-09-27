@@ -195,6 +195,13 @@ func (g *Game) checkMapChange(memory *leech.Memory, client uintptr) {
 		return
 	}
 
+	// While a map loads the name pointer briefly points into
+	// game code, which reads back as garbage. Keep the current
+	// map until the name is readable again.
+	if !isPrintable(mapName) {
+		return
+	}
+
 	//----------------------------------------------------------------------------//
 
 	// No change
@@ -216,12 +223,59 @@ func (g *Game) checkMapChange(memory *leech.Memory, client uintptr) {
 		return
 	}
 
+	// The name becomes a file name, so names that could form a
+	// path, such as those of workshop maps, have no collision data
+	if !isValidMapName(mapName) {
+		logger.Warn("map name is not a valid file name, no collision data",
+			logger.String("map", mapName),
+		)
+		return
+	}
+
 	// Load in the background. Reading the file and building
 	// the BVH would otherwise stall entity updates and the
 	// trigger until the load finishes.
 	go g.loadMap(mapName)
 
 	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// isPrintable returns true if the name only holds printable
+// ASCII characters.
+func isPrintable(name string) bool {
+
+	for i := 0; i < len(name); i++ {
+		if name[i] < 0x20 || name[i] > 0x7E {
+			return false
+		}
+	}
+
+	return true
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// isValidMapName returns true if the name only holds the
+// letters, digits, underscores and dashes of a map name, so it
+// can be used as a file name without forming a path.
+func isValidMapName(name string) bool {
+
+	if name == "" {
+		return false
+	}
+
+	for _, c := range name {
+		isLetter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		isDigit := c >= '0' && c <= '9'
+
+		if !isLetter && !isDigit && c != '_' && c != '-' {
+			return false
+		}
+	}
+
+	return true
 }
 
 ////////////////////////////////////////////////////////////////////////////////
