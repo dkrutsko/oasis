@@ -4,6 +4,7 @@
 
 OUTPUT = ./bin/
 BINARY = oasis
+EXTRACTOR = extractor
 
 LDFLAGS = -X 'github.com/dkrutsko/oasis/config.buildDate=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)' \
           -X 'github.com/dkrutsko/oasis/utility.gitEmbedCommit=$(shell git --no-pager rev-parse --verify HEAD | base64)' \
@@ -27,11 +28,12 @@ help:
 	@echo "----------------"
 	@echo
 	@echo "MAKE"
-	@echo "  $$ make help    - Prints out these help instructions"
-	@echo "  $$ make build   - Builds main binary in release mode"
-	@echo "  $$ make debug   - Builds main binary in debug mode"
-	@echo "  $$ make clean   - Cleans and removes generated files"
-	@echo "  $$ make publish - Builds artifacts for a new release"
+	@echo "  $$ make help      - Prints out these help instructions"
+	@echo "  $$ make build     - Builds main binary in release mode"
+	@echo "  $$ make debug     - Builds main binary in debug mode"
+	@echo "  $$ make clean     - Cleans and removes generated files"
+	@echo "  $$ make publish   - Builds artifacts for a new release"
+	@echo "  $$ make extractor - Builds the map extractor binary"
 	@echo
 	@echo "DOCS"
 	@echo "  Visit https://github.com/dkrutsko/oasis for more"
@@ -56,6 +58,21 @@ debug:
 
 clean:
 	rm -rf "$(OUTPUT)"
+
+
+
+##----------------------------------------------------------------------------##
+## Extractor                                                                  ##
+##----------------------------------------------------------------------------##
+
+.PHONY: extractor extractor_linux_amd64
+
+extractor:
+	go build -ldflags "-s -w" -o "$(OUTPUT)$(EXTRACTOR)" ./extractor
+
+extractor_linux_amd64:
+	# Static build for the map pipeline container
+	env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o "$(OUTPUT)$(EXTRACTOR)_linux_amd64/$(EXTRACTOR)" ./extractor
 
 
 
