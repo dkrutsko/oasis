@@ -67,6 +67,10 @@ type Game struct {
 	// scanner is using the primary FPGA.
 	scanning atomic.Bool
 
+	// Entity pointers resolved by earlier action frames.
+	// Only the action updater uses them.
+	entityCache entityCache
+
 	// Signaled when action or camera state is updated.
 	// The overlay listens on this to render only when
 	// new data is available.

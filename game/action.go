@@ -97,6 +97,35 @@ func NewActionState() *ActionState {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// entityChain holds the pointers followed from an entity list
+// slot to the player data. The chain ends at the first null
+// pointer, so every pointer after it is zero.
+type entityChain struct {
+	controller uintptr // Player controller
+	handle     int32   // Pawn handle, zero while dead
+	chunk      uintptr // Entity list chunk of the pawn
+	pawn       uintptr // Player pawn
+	sceneNode  uintptr // Game scene node of the pawn
+	boneArray  uintptr // Bone array of the skeleton
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// entityCache holds the entity list and the chains of every
+// slot resolved by earlier action frames.
+type entityCache struct {
+	pid    uint32
+	client uintptr
+
+	entListBase uintptr
+	listEntry   uintptr
+	chains      [64]entityChain
+
+	passes int // Scatter passes since the last entity log
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 
 	//----------------------------------------------------------------------------//
@@ -209,326 +238,304 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 
 	//----------------------------------------------------------------------------//
 
-	// Check if the player is currently in-game
-	localPawnAddr, err := memory.ReadPtr(client + offLocalPlayerPawn)
-	if err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
-
-	// Not in game
-	if localPawnAddr == 0 {
-		if now.Sub(g.lastEntityLog) >= time.Second {
-			g.lastEntityLog = now
-			logger.Dbg("not in game, local pawn is null")
-		}
-		result.Result = ActionResultSuccess
-		return result
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Read entity list base pointer
-	entListBase, err := memory.ReadPtr(client + offEntityList)
-	if err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
-
-	if entListBase == 0 {
-		result.Result = ActionResultNoEntList
-		return result
-	}
-
-	// Read first chunk of entity list (chunk pointer at +0x10)
-	listEntry, err := memory.ReadPtr(entListBase + 0x10)
-	if err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
-
-	if listEntry == 0 {
-		result.Result = ActionResultNoEntList
-		return result
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Use scatter for batched entity reads when available.
-	// This reduces ~30-40 individual DMA round-trips to ~5
-	// batched executions.
+	// Use scatter for batched entity reads when available. The
+	// pointer chains it caches are only valid in the process
+	// they were read from.
 	scatter := g.scatter
 	pid := scanner.Process.GetPid()
+
+	cache := &g.entityCache
+	if cache.pid != pid || cache.client != client {
+		*cache = entityCache{pid: pid, client: client}
+	}
 
 	// Internal CModelState offset to the bone array pointer.
 	// This is not exposed in schema dumps and comes from SDK
 	// reverse engineering.
 	const offBoneArray uintptr = 0x80
 
-	if scatter == nil {
-		return g.updateActionSequential(
-			result, memory, localPawnAddr, entListBase, listEntry,
-			offPawnHandle, offHealth, offTeamNum, offOrigin, offEyeAngles,
-			offGameSceneNode, offModelState, offBoneArray,
-		)
+	//----------------------------------------------------------------------------//
+
+	// Resolve the entity list when it is not cached. Without
+	// scatter, it is resolved and read one entity at a time on
+	// every frame.
+	if scatter == nil || cache.listEntry == 0 {
+
+		// Check if the player is currently in-game
+		localPawnAddr, err := memory.ReadPtr(client + offLocalPlayerPawn)
+		if err != nil {
+			result.Result = ActionResultReadFail
+			return result
+		}
+
+		// Not in game
+		if localPawnAddr == 0 {
+			if now.Sub(g.lastEntityLog) >= time.Second {
+				g.lastEntityLog = now
+				logger.Dbg("not in game, local pawn is null")
+			}
+			result.Result = ActionResultSuccess
+			return result
+		}
+
+		// Read entity list base pointer
+		entListBase, err := memory.ReadPtr(client + offEntityList)
+		if err != nil {
+			result.Result = ActionResultReadFail
+			return result
+		}
+
+		if entListBase == 0 {
+			result.Result = ActionResultNoEntList
+			return result
+		}
+
+		// Read first chunk of entity list (chunk pointer at +0x10)
+		listEntry, err := memory.ReadPtr(entListBase + 0x10)
+		if err != nil {
+			result.Result = ActionResultReadFail
+			return result
+		}
+
+		if listEntry == 0 {
+			result.Result = ActionResultNoEntList
+			return result
+		}
+
+		if scatter == nil {
+			return g.updateActionSequential(
+				result, memory, localPawnAddr, entListBase, listEntry,
+				offPawnHandle, offHealth, offTeamNum, offOrigin, offEyeAngles,
+				offGameSceneNode, offModelState, offBoneArray,
+			)
+		}
+
+		cache.entListBase = entListBase
+		cache.listEntry = listEntry
 	}
 
 	//----------------------------------------------------------------------------//
 
-	// Pass 1: Read all 64 controller pointers
-	for e := 0; e < 64; e++ {
-		scatter.Prepare(listEntry+uintptr(e+1)*0x70, 8)
-	}
+	// Read the entities through the pointer chains cached by
+	// earlier frames. Each pass reads every pointer of a chain
+	// again along with its data, and the data is only used when
+	// none of them changed. A changed chain is followed one
+	// pointer further each pass, so a new chain takes a pass
+	// per pointer plus one for its data. Chains that are still
+	// changing after that are skipped for this frame.
+	const maxPasses = 7
+	readSize := uint32(BoneCount * BoneDataSize)
 
-	if err := scatter.ExecuteRead(); err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
+	var localPawnAddr uintptr
+	var settled [64]bool
+	entities := make([]ActionEntity, 64)
 
-	var controllers [64]uintptr
-	for e := 0; e < 64; e++ {
-		controllers[e], _ = scatter.ReadPtr(listEntry + uintptr(e+1)*0x70)
+	for pass := 0; pass < maxPasses; pass++ {
+
+		cache.passes++
+		scatter.Clear(pid, leech.ScatterFlagDefault)
+
+		// The entity list is read again to check that it has not
+		// moved since it was cached
+		scatter.Prepare(client+offLocalPlayerPawn, 8)
+		scatter.Prepare(client+offEntityList, 8)
+		scatter.Prepare(cache.entListBase+0x10, 8)
+
+		for e := 0; e < 64; e++ {
+			if settled[e] {
+				continue
+			}
+
+			chain := &cache.chains[e]
+			index := uintptr(chain.handle) & 0x7FFF
+
+			scatter.Prepare(cache.listEntry+uintptr(e+1)*0x70, 8)
+
+			if chain.controller != 0 {
+				scatter.Prepare(chain.controller+offPawnHandle, 4)
+				scatter.Prepare(chain.controller+offPawnIsAlive, 1)
+			}
+
+			if chain.handle != 0 {
+				scatter.Prepare(cache.entListBase+0x10+8*(index>>9), 8)
+			}
+
+			if chain.chunk != 0 {
+				scatter.Prepare(chain.chunk+0x70*(index&0x1FF), 8)
+			}
+
+			if chain.pawn != 0 {
+				scatter.Prepare(chain.pawn+offHealth, 4)
+				scatter.Prepare(chain.pawn+offTeamNum, 4)
+				scatter.Prepare(chain.pawn+offOrigin, 12)
+				scatter.Prepare(chain.pawn+offEyeAngles, 8)
+				scatter.Prepare(chain.pawn+offGameSceneNode, 8)
+			}
+
+			if chain.sceneNode != 0 {
+				scatter.Prepare(chain.sceneNode+offModelState+offBoneArray, 8)
+			}
+
+			if chain.boneArray != 0 {
+				scatter.Prepare(chain.boneArray, readSize)
+			}
+		}
+
+		if err := scatter.ExecuteRead(); err != nil {
+			result.Result = ActionResultReadFail
+			return result
+		}
+
+		localPawnAddr, _ = scatter.ReadPtr(client + offLocalPlayerPawn)
+		entListBase, _ := scatter.ReadPtr(client + offEntityList)
+		listEntry, _ := scatter.ReadPtr(cache.entListBase + 0x10)
+
+		// Left the game, the next frame starts over
+		if localPawnAddr == 0 {
+			*cache = entityCache{pid: pid, client: client}
+			result.Result = ActionResultSuccess
+			return result
+		}
+
+		// The entity list moved, which invalidates every chain,
+		// so the next frame resolves it again
+		if entListBase != cache.entListBase || listEntry != cache.listEntry {
+			*cache = entityCache{pid: pid, client: client}
+			result.Result = ActionResultNoEntList
+			return result
+		}
+
+		changed := false
+
+		for e := 0; e < 64; e++ {
+			if settled[e] {
+				continue
+			}
+
+			chain := &cache.chains[e]
+			index := uintptr(chain.handle) & 0x7FFF
+
+			// Read each pointer again through the cached pointer
+			// before it, ending the chain at the first null one
+			var fresh entityChain
+			fresh.controller, _ = scatter.ReadPtr(cache.listEntry + uintptr(e+1)*0x70)
+
+			if chain.controller != 0 && fresh.controller != 0 {
+
+				// Pawns of dead and disconnected players never
+				// become entities, and reading their stale memory
+				// made reads several times slower, so their chains
+				// end here
+				alive, _ := scatter.Read(chain.controller+offPawnIsAlive, 1)
+				handle, _ := scatter.ReadInt32(chain.controller + offPawnHandle)
+
+				if len(alive) == 1 && alive[0] != 0 && handle != 0 && handle != -1 {
+					fresh.handle = handle
+				}
+			}
+
+			if chain.handle != 0 && fresh.handle != 0 {
+				fresh.chunk, _ = scatter.ReadPtr(cache.entListBase + 0x10 + 8*(index>>9))
+			}
+
+			if chain.chunk != 0 && fresh.chunk != 0 {
+				fresh.pawn, _ = scatter.ReadPtr(chain.chunk + 0x70*(index&0x1FF))
+			}
+
+			if chain.pawn != 0 && fresh.pawn != 0 {
+				fresh.sceneNode, _ = scatter.ReadPtr(chain.pawn + offGameSceneNode)
+			}
+
+			if chain.sceneNode != 0 && fresh.sceneNode != 0 {
+				fresh.boneArray, _ = scatter.ReadPtr(chain.sceneNode + offModelState + offBoneArray)
+			}
+
+			// Data read through a changed chain may be stale
+			if fresh != *chain {
+				*chain = fresh
+				changed = true
+				continue
+			}
+
+			settled[e] = true
+
+			if chain.pawn == 0 {
+				continue
+			}
+
+			health, _ := scatter.ReadInt32(chain.pawn + offHealth)
+			if health <= 0 {
+				continue
+			}
+
+			team, _ := scatter.ReadInt32(chain.pawn + offTeamNum)
+
+			originData, err := scatter.Read(chain.pawn+offOrigin, 12)
+			if err != nil {
+				continue
+			}
+			origin, _ := math.Vector3FromBytes32(originData)
+
+			if origin.X == 0 && origin.Y == 0 && origin.Z == 0 {
+				continue
+			}
+
+			anglesData, _ := scatter.Read(chain.pawn+offEyeAngles, 8)
+			angles, _ := math.Vector2FromBytes32(anglesData)
+
+			entity := ActionEntity{
+				Valid:  true,
+				Index:  e,
+				Origin: origin,
+				Angles: angles,
+				Health: health,
+				Team:   team,
+				Head:   math.Vector3{X: origin.X, Y: origin.Y, Z: origin.Z + 72},
+			}
+
+			// The full contiguous block up to BoneCount is read
+			// so every indexed bone is covered in one read
+			if chain.boneArray != 0 {
+				boneData, err := scatter.Read(chain.boneArray, readSize)
+				if err == nil {
+					entity.Bones = decodeBonePositions(boneData)
+				}
+			}
+
+			if entity.Bones.Valid {
+				entity.Head = entity.Bones.Pos[BoneHead]
+				entity.Neck = entity.Bones.Pos[BoneNeck]
+				entity.Body = entity.Bones.Pos[BoneSpine2]
+			}
+
+			entities[e] = entity
+		}
+
+		if !changed {
+			break
+		}
 	}
 
 	//----------------------------------------------------------------------------//
 
-	// Pass 2: Read pawn handles and alive state from valid
-	// controllers
-	scatter.Clear(pid, leech.ScatterFlagDefault)
-
-	for e := 0; e < 64; e++ {
-		if controllers[e] != 0 {
-			scatter.Prepare(controllers[e]+offPawnHandle, 4)
-			scatter.Prepare(controllers[e]+offPawnIsAlive, 1)
-		}
-	}
-
-	if err := scatter.ExecuteRead(); err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
-
-	var pawnHandles [64]int32
-	var chunkIdxs [64]uintptr
-	var entryIdxs [64]uintptr
-
-	for e := 0; e < 64; e++ {
-		if controllers[e] == 0 {
-			continue
-		}
-
-		// Pawns of dead and disconnected players never become
-		// entities, and reading their stale memory made pass 5
-		// several times slower, so they are skipped here
-		alive, _ := scatter.Read(controllers[e]+offPawnIsAlive, 1)
-		if len(alive) != 1 || alive[0] == 0 {
-			continue
-		}
-
-		h, _ := scatter.ReadInt32(controllers[e] + offPawnHandle)
-		if h == 0 || h == -1 {
-			continue
-		}
-
-		pawnHandles[e] = h
-		entityIndex := uintptr(h) & 0x7FFF
-		chunkIdxs[e] = entityIndex >> 9
-		entryIdxs[e] = entityIndex & 0x1FF
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Pass 3: Read pawn chunk pointers
-	scatter.Clear(pid, leech.ScatterFlagDefault)
-
-	for e := 0; e < 64; e++ {
-		if pawnHandles[e] == 0 {
-			continue
-		}
-		scatter.Prepare(entListBase+0x10+8*chunkIdxs[e], 8)
-	}
-
-	if err := scatter.ExecuteRead(); err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
-
-	var pawnChunks [64]uintptr
-	for e := 0; e < 64; e++ {
-		if pawnHandles[e] == 0 {
-			continue
-		}
-		pawnChunks[e], _ = scatter.ReadPtr(entListBase + 0x10 + 8*chunkIdxs[e])
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Pass 4: Read pawn pointers from chunks
-	scatter.Clear(pid, leech.ScatterFlagDefault)
-
-	for e := 0; e < 64; e++ {
-		if pawnChunks[e] == 0 {
-			continue
-		}
-		scatter.Prepare(pawnChunks[e]+0x70*entryIdxs[e], 8)
-	}
-
-	if err := scatter.ExecuteRead(); err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
-
-	var pawns [64]uintptr
-	for e := 0; e < 64; e++ {
-		if pawnChunks[e] == 0 {
-			continue
-		}
-		pawns[e], _ = scatter.ReadPtr(pawnChunks[e] + 0x70*entryIdxs[e])
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Pass 5: Read entity data and scene node pointers for all valid pawns
-	scatter.Clear(pid, leech.ScatterFlagDefault)
-
-	for e := 0; e < 64; e++ {
-		if pawns[e] == 0 {
-			continue
-		}
-		scatter.Prepare(pawns[e]+offHealth, 4)
-		scatter.Prepare(pawns[e]+offTeamNum, 4)
-		scatter.Prepare(pawns[e]+offOrigin, 12)
-		scatter.Prepare(pawns[e]+offEyeAngles, 8)
-		scatter.Prepare(pawns[e]+offGameSceneNode, 8)
-	}
-
-	if err := scatter.ExecuteRead(); err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Decode results and build entity list
-	entities := make([]ActionEntity, 0, 64)
+	// Keep the entities in slot order and find the local player
+	count := 0
 	playerIdx := -1
 
-	// Track scene node pointers and entity-to-slot mapping
-	// for the bone reading passes that follow.
-	var sceneNodes [64]uintptr
-	entitySlots := make([]int, 0, 64)
-
-	for e := 0; e < 64; e++ {
-		if pawns[e] == 0 {
+	for e := range entities {
+		if !entities[e].Valid {
 			continue
 		}
 
-		health, _ := scatter.ReadInt32(pawns[e] + offHealth)
-		if health <= 0 {
-			continue
+		if cache.chains[e].pawn == localPawnAddr {
+			playerIdx = count
 		}
 
-		team, _ := scatter.ReadInt32(pawns[e] + offTeamNum)
-
-		originData, err := scatter.Read(pawns[e]+offOrigin, 12)
-		if err != nil {
-			continue
-		}
-		origin, _ := math.Vector3FromBytes32(originData)
-
-		if origin.X == 0 && origin.Y == 0 && origin.Z == 0 {
-			continue
-		}
-
-		anglesData, _ := scatter.Read(pawns[e]+offEyeAngles, 8)
-		angles, _ := math.Vector2FromBytes32(anglesData)
-
-		sceneNodes[e], _ = scatter.ReadPtr(pawns[e] + offGameSceneNode)
-
-		entity := ActionEntity{
-			Valid:  true,
-			Index:  e,
-			Origin: origin,
-			Angles: angles,
-			Health: health,
-			Team:   team,
-			Head:   math.Vector3{X: origin.X, Y: origin.Y, Z: origin.Z + 72},
-		}
-
-		entities = append(entities, entity)
-		entitySlots = append(entitySlots, e)
-
-		if pawns[e] == localPawnAddr {
-			playerIdx = len(entities) - 1
-		}
+		entities[count] = entities[e]
+		count++
 	}
 
-	//----------------------------------------------------------------------------//
-
-	// Pass 6: Read bone array pointers from scene nodes
-	scatter.Clear(pid, leech.ScatterFlagDefault)
-
-	for _, slot := range entitySlots {
-		if sceneNodes[slot] != 0 {
-			scatter.Prepare(sceneNodes[slot]+offModelState+offBoneArray, 8)
-		}
-	}
-
-	if err := scatter.ExecuteRead(); err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
-
-	var boneArrays [64]uintptr
-	for _, slot := range entitySlots {
-		if sceneNodes[slot] != 0 {
-			boneArrays[slot], _ = scatter.ReadPtr(sceneNodes[slot] + offModelState + offBoneArray)
-		}
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Pass 7: Read bone positions for all entities with valid
-	// bone arrays. We read the full contiguous block up to
-	// BoneCount so every indexed bone is covered in one read.
-	scatter.Clear(pid, leech.ScatterFlagDefault)
-
-	readSize := uint32(BoneCount * BoneDataSize)
-	for _, slot := range entitySlots {
-		if boneArrays[slot] != 0 {
-			scatter.Prepare(boneArrays[slot], readSize)
-		}
-	}
-
-	if err := scatter.ExecuteRead(); err != nil {
-		result.Result = ActionResultReadFail
-		return result
-	}
-
-	for i, slot := range entitySlots {
-		if boneArrays[slot] == 0 {
-			continue
-		}
-
-		boneData, err := scatter.Read(boneArrays[slot], readSize)
-		if err != nil {
-			continue
-		}
-
-		bones := decodeBonePositions(boneData)
-		entities[i].Bones = bones
-
-		if bones.Valid {
-			entities[i].Head = bones.Pos[BoneHead]
-			entities[i].Neck = bones.Pos[BoneNeck]
-			entities[i].Body = bones.Pos[BoneSpine2]
-		}
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Reset scatter for next frame
-	scatter.Clear(pid, leech.ScatterFlagDefault)
+	entities = entities[:count]
 
 	//----------------------------------------------------------------------------//
 
@@ -551,7 +558,9 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 			logger.Int("total", len(entities)),
 			logger.Int("alive", alive),
 			logger.Bool("has_player", playerIdx >= 0),
+			logger.Int("passes", cache.passes),
 		)
+		cache.passes = 0
 	}
 
 	// Calculate distances from local player
