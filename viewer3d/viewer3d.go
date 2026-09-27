@@ -4,6 +4,7 @@ package viewer3d
 
 import (
 	"context"
+	"time"
 
 	"github.com/gogpu/gogpu"
 	ginput "github.com/gogpu/gogpu/input"
@@ -27,6 +28,7 @@ type Viewer3d struct {
 	renderer  Renderer
 	loadedMap string
 	ready     bool
+	lastFrame time.Time
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -108,6 +110,15 @@ func (v *Viewer3d) Run(ctx context.Context) error {
 
 		//--------------------------------------------------------------------//
 
+		// Measure the frame time so free mode moves at the
+		// same speed regardless of the frame rate
+		now := time.Now()
+		dt := now.Sub(v.lastFrame).Seconds()
+		if dt > freeMaxFrameTime {
+			dt = freeMaxFrameTime
+		}
+		v.lastFrame = now
+
 		// Camera input
 		inp := app.Input()
 		mouse := inp.Mouse()
@@ -141,7 +152,6 @@ func (v *Viewer3d) Run(ctx context.Context) error {
 				mouse.Pressed(ginput.MouseButtonRight) ||
 				mouse.Pressed(ginput.MouseButtonMiddle)
 
-			dt := 1.0 / 60.0
 			v.camera.UpdateFree(dt,
 				mx, my, anyMouse,
 				kb.Pressed(ginput.KeyW),

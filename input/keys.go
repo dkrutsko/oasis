@@ -54,6 +54,7 @@ type Keys struct {
 	seg        *shm.Segment
 	mu         sync.RWMutex
 	lastScroll int32
+	hasScroll  bool
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -100,11 +101,12 @@ func (k *Keys) Close() error {
 // 4 in the shared memory and returns the change since the
 // last call. Moonlight writes a cumulative scroll counter.
 // The segment is read-only so we track the delta ourselves
-// rather than resetting the value.
+// rather than resetting the value. The first call after
+// attaching to a segment returns zero.
 func (k *Keys) GetScrollDelta() int32 {
 
-	k.mu.RLock()
-	defer k.mu.RUnlock()
+	k.mu.Lock()
+	defer k.mu.Unlock()
 
 	if k.seg == nil {
 		return 0
@@ -119,6 +121,14 @@ func (k *Keys) GetScrollDelta() int32 {
 		int32(data[keysScrollOffset+1])<<8 |
 		int32(data[keysScrollOffset+2])<<16 |
 		int32(data[keysScrollOffset+3])<<24
+
+	// Only record the counter on the first read. It holds
+	// whatever Moonlight accumulated before we attached.
+	if !k.hasScroll {
+		k.lastScroll = val
+		k.hasScroll = true
+		return 0
+	}
 
 	delta := val - k.lastScroll
 	k.lastScroll = val
@@ -204,6 +214,7 @@ func (k *Keys) connectionLoop(ctx context.Context) {
 
 			k.mu.Lock()
 			k.seg = seg
+			k.hasScroll = false
 			k.mu.Unlock()
 
 			lastCheck = time.Now()

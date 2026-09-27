@@ -17,8 +17,10 @@ import (
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Maximum entity vertex buffer size in bytes. Enough for
-// 64 entities with ~6 lines each (64 * 6 * 2 * 24 = 18KB).
+// Maximum entity vertex buffer size in bytes. Each line is
+// a camera-facing quad of 6 vertices at 28 bytes (168 bytes)
+// so this holds 390 quads. 64 entities use 192 of them and
+// the aim ray gets the rest.
 const entityBufSize = 65536
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -161,7 +163,7 @@ func (r *Renderer) Init(dev *wgpu.Device, format gputypes.TextureFormat) error {
 
 	//----------------------------------------------------------------------------//
 
-	// Entity pipeline: colored lines, opaque
+	// Entity pipeline: colored triangles with alpha blending
 	entShader, err := dev.CreateShaderModule(&wgpu.ShaderModuleDescriptor{WGSL: entityShaderWGSL})
 	if err != nil {
 		return err
@@ -384,15 +386,15 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 		}
 
 		// Fade enemies based on height difference from
-		// the local player. Same floor stays opaque,
-		// then drops sharply past ~128 units (one floor).
+		// the local player. Within 64 units stays opaque,
+		// then fades to 0.3 at 128 units (one floor).
 		if isEnemy && hasPlayer {
 			heightDiff := sysMath.Abs(entity.Origin.Z - playerZ)
 			t := heightDiff / 128.0
 			if t < 0.5 {
 				// Same floor: fully opaque
 			} else if t < 1.0 {
-				// Sharp falloff from 1.0 to 0.15
+				// Sharp falloff from 1.0 to 0.3
 				ca *= float32(1.0 - (t-0.5)*1.4)
 			} else {
 				ca *= 0.3
@@ -516,9 +518,16 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 
 	//----------------------------------------------------------------------------//
 
+	// Drop whole quads that do not fit in the vertex buffer.
+	// The dashed aim ray is appended last so only its far end
+	// is lost.
+	if len(buf) > entityBufSize {
+		buf = buf[:entityBufSize-entityBufSize%(6*28)]
+	}
+
 	r.entityVertices = uint32(len(buf) / 28)
 
-	if r.entityVertices > 0 && len(buf) <= entityBufSize {
+	if r.entityVertices > 0 {
 		r.queue.WriteBuffer(r.entityBuf, 0, buf)
 	}
 
@@ -615,7 +624,7 @@ func (r *Renderer) Draw(sv *wgpu.TextureView, mvp math.Matrix4) error {
 		rp.Draw(r.mapVertices, 1, 0, 0)
 	}
 
-	// Draw entities (opaque colored lines)
+	// Draw entities (alpha blended line quads)
 	if r.entityVertices > 0 {
 		rp.SetPipeline(r.entityPipe)
 		rp.SetBindGroup(0, r.bindGroup, nil)

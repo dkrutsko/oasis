@@ -323,6 +323,8 @@ func main() {
 		go func() { errCh <- group.Wait() }()
 
 		if vErr := v3d.Run(gctx); vErr != nil {
+			exitCode = exitCodeViewerError
+
 			logger.Err("failed to run 3d viewer",
 				logger.Error("error", vErr),
 			)

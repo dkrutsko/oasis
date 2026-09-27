@@ -61,6 +61,17 @@ func Load(dir, name string) (*Map, error) {
 		)
 	}
 
+	// The format has no header so the size is the only
+	// check that the file actually holds packed triangles
+	if len(data)%triSize != 0 {
+		return nil, errors.New(
+			"tri file size is not a multiple of the triangle size",
+			errors.String("path", path),
+			errors.Int("size", len(data)),
+			errors.Int("triangle_size", triSize),
+		)
+	}
+
 	//----------------------------------------------------------------------------//
 
 	// Decode packed float32 triangles
@@ -79,7 +90,7 @@ func Load(dir, name string) (*Map, error) {
 	//----------------------------------------------------------------------------//
 
 	// Build spatial acceleration structure
-	root := buildBVH(triangles, 0)
+	root := buildBVH(triangles)
 
 	logger.Info("loaded map collision data",
 		logger.String("name", name),
@@ -167,8 +178,10 @@ func traceNearest(node *BVHNode, ray geometry.Ray, best float64) float64 {
 		return best
 	}
 
-	_, hit := ray.IntersectBox(node.Box)
-	if !hit {
+	// Prune subtree if the ray misses the bounding box or
+	// only enters it beyond the nearest hit found so far
+	entry, hit := boxEntry(ray, node.Box)
+	if !hit || entry >= best {
 		return best
 	}
 
@@ -183,8 +196,19 @@ func traceNearest(node *BVHNode, ray geometry.Ray, best float64) float64 {
 		return best
 	}
 
-	best = traceNearest(node.Left, ray, best)
-	best = traceNearest(node.Right, ray, best)
+	// Visit the child whose center is nearer along the ray
+	// first so its hits can prune the farther child
+	near, far := node.Left, node.Right
+	if near != nil && far != nil {
+		nearDist := near.Box.Center.Sub(ray.Origin).Dot(ray.Direction)
+		farDist := far.Box.Center.Sub(ray.Origin).Dot(ray.Direction)
+		if farDist < nearDist {
+			near, far = far, near
+		}
+	}
+
+	best = traceNearest(near, ray, best)
+	best = traceNearest(far, ray, best)
 	return best
 }
 
@@ -196,9 +220,10 @@ func intersects(node *BVHNode, ray geometry.Ray, maxDist float64) bool {
 		return false
 	}
 
-	// Prune subtree if the ray misses the bounding box
-	_, hit := ray.IntersectBox(node.Box)
-	if !hit {
+	// Prune subtree if the ray misses the bounding box or
+	// only enters it beyond the end of the segment
+	entry, hit := boxEntry(ray, node.Box)
+	if !hit || entry >= maxDist {
 		return false
 	}
 
@@ -219,6 +244,25 @@ func intersects(node *BVHNode, ray geometry.Ray, maxDist float64) bool {
 		return true
 	}
 	return intersects(node.Right, ray, maxDist)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// boxEntry returns the distance at which the ray enters the
+// box, or zero when the ray starts inside it. In that case
+// `IntersectBox` returns the exit distance instead, which
+// cannot be used for pruning.
+func boxEntry(ray geometry.Ray, box geometry.Box) (float64, bool) {
+
+	dist, hit := ray.IntersectBox(box)
+	if !hit {
+		return 0, false
+	}
+
+	if box.Contains(ray.Origin) {
+		return 0, true
+	}
+	return dist, true
 }
 
 ////////////////////////////////////////////////////////////////////////////////

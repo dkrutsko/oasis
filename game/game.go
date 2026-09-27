@@ -47,12 +47,21 @@ type Game struct {
 	memory       *leech.Memory
 	cameraMemory *leech.Memory
 	scatter      *leech.Scatter
-	action       *ActionState
-	camera       *CameraState
 	trigger      *Trigger
 	health       *HealthMonitor
-	currentMap   *maps.Map
-	mapName      string
+
+	// Published by the updaters and read by the overlay,
+	// trigger and viewer goroutines, so they are swapped
+	// atomically. Published states are never modified.
+	action     atomic.Pointer[ActionState]
+	camera     atomic.Pointer[CameraState]
+	currentMap atomic.Pointer[maps.Map]
+
+	// Guards writes to `mapName` and `currentMap` so that a
+	// background map load finishing after another map change
+	// cannot replace the newer map.
+	mapLock sync.Mutex
+	mapName string
 
 	// Signals the action updater to pause while the
 	// scanner is using the primary FPGA.
@@ -81,8 +90,6 @@ func New(opts *Options) *Game {
 		options: opts,
 
 		scanner: NewScannerState(),
-		action:  NewActionState(),
-		camera:  NewCameraState(),
 		trigger: NewTrigger(),
 		health:  NewHealthMonitor(),
 
@@ -92,6 +99,9 @@ func New(opts *Options) *Game {
 		strCache: make(map[string]string),
 		intCache: make(map[string]uintptr),
 	}
+
+	g.action.Store(NewActionState())
+	g.camera.Store(NewCameraState())
 
 	return g
 }
@@ -105,13 +115,13 @@ func (g *Game) GetScannerState() *ScannerState {
 ////////////////////////////////////////////////////////////////////////////////
 
 func (g *Game) GetActionState() *ActionState {
-	return g.action
+	return g.action.Load()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 func (g *Game) GetCameraState() *CameraState {
-	return g.camera
+	return g.camera.Load()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -129,7 +139,7 @@ func (g *Game) GetHealthMonitor() *HealthMonitor {
 ////////////////////////////////////////////////////////////////////////////////
 
 func (g *Game) GetCurrentMap() *maps.Map {
-	return g.currentMap
+	return g.currentMap.Load()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -192,29 +202,49 @@ func (g *Game) checkMapChange(memory *leech.Memory, client uintptr) {
 		return
 	}
 
-	g.mapName = mapName
 	logger.Info("map changed", logger.String("map", mapName))
+
+	// Clear the old collision data right away so it is never
+	// used against the new map while the new one loads
+	g.mapLock.Lock()
+	g.mapName = mapName
+	g.currentMap.Store(nil)
+	g.mapLock.Unlock()
 
 	// Only load collision data when a maps directory is configured
 	if g.options.Maps == "" {
-		g.currentMap = nil
 		return
 	}
 
-	// Try to load collision data for this map
+	// Load in the background. Reading the file and building
+	// the BVH would otherwise stall entity updates and the
+	// trigger until the load finishes.
+	go g.loadMap(mapName)
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// loadMap loads collision data for the given map and makes
+// it current, unless the map changed again while loading.
+func (g *Game) loadMap(mapName string) {
+
 	m, err := maps.Load(g.options.Maps, mapName)
 	if err != nil {
 		logger.Warn("failed to load map collision data",
 			logger.String("map", mapName),
 			logger.Error("error", err),
 		)
-		g.currentMap = nil
 		return
 	}
 
-	g.currentMap = m
+	g.mapLock.Lock()
+	defer g.mapLock.Unlock()
 
-	//----------------------------------------------------------------------------//
+	if g.mapName == mapName {
+		g.currentMap.Store(m)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -409,7 +439,7 @@ func (g *Game) Create() error {
 			frameCount++
 
 			if result.Result == ActionResultSuccess {
-				g.action = result
+				g.action.Store(result)
 				g.notifyUpdated()
 			}
 
@@ -468,7 +498,7 @@ func (g *Game) Create() error {
 			frameCount++
 
 			if result.Result == CameraResultSuccess {
-				g.camera = result
+				g.camera.Store(result)
 				g.notifyUpdated()
 			}
 

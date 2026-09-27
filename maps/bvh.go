@@ -28,7 +28,7 @@ type BVHNode struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func buildBVH(triangles []Triangle, depth int) *BVHNode {
+func buildBVH(triangles []Triangle) *BVHNode {
 
 	if len(triangles) == 0 {
 		return nil
@@ -57,8 +57,8 @@ func buildBVH(triangles []Triangle, depth int) *BVHNode {
 
 	// Split at median
 	mid := len(triangles) / 2
-	node.Left = buildBVH(triangles[:mid], depth+1)
-	node.Right = buildBVH(triangles[mid:], depth+1)
+	node.Left = buildBVH(triangles[:mid])
+	node.Right = buildBVH(triangles[mid:])
 
 	return node
 }

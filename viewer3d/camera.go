@@ -18,6 +18,10 @@ const (
 
 	// Movement speed in free mode (units per second).
 	freeMoveSpeed = 800.0
+
+	// Longest frame time applied to free mode movement so
+	// a stalled frame does not move the camera in one jump.
+	freeMaxFrameTime = 0.1
 )
 
 ////////////////////////////////////////////////////////////////////////////////
