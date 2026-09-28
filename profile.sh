@@ -219,7 +219,7 @@ pushd "$(dirname "$0")" > /dev/null
 ##----------------------------------------------------------------------------##
 
 printf -- "\n\e[1;32mBuilding Oasis\e[0m\n"
-CGO_ENABLED=0 go build -mod=vendor -tags "viewer3d nofakecgo" -o "${_BINARY}" .
+go build -o "${_BINARY}" .
 
 _started="$(date +%Y%m%d-%H%M%S)"
 _session="${PWD}/bin/profiles/${_started}"

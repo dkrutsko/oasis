@@ -29,7 +29,7 @@ import (
 func init() {
 
 	// Lock the main goroutine to the OS main thread. macOS
-	// requires Cocoa (and therefore GLFW) operations to run
+	// requires Cocoa (and therefore SDL) operations to run
 	// on thread 0. This is harmless when --viewer3d is not
 	// used.
 	runtime.LockOSThread()
@@ -312,7 +312,7 @@ func main() {
 
 	exitCode := exitCodeSuccess
 
-	// When the 3D viewer is active, run its GLFW loop on the
+	// When the 3D viewer is active, run its SDL loop on the
 	// main goroutine (required by macOS) and wait for the
 	// errgroup in the background. Otherwise use the normal
 	// blocking wait.

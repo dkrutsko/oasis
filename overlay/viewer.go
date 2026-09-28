@@ -1,4 +1,4 @@
-//go:build (darwin || linux) && !viewer3d
+//go:build darwin || linux
 
 package overlay
 

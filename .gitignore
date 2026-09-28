@@ -9,7 +9,6 @@ logs/
 
 # Build
 bin/
-vendor/
 
 # IDE
 .vs/

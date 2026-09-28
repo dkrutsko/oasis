@@ -1,5 +1,3 @@
-//go:build viewer3d
-
 package viewer3d
 
 import (

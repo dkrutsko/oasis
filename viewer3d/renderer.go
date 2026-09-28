@@ -1,14 +1,13 @@
-//go:build viewer3d
-
 package viewer3d
 
 import (
 	"encoding/binary"
 	sysMath "math"
+	"unsafe"
 
-	"github.com/gogpu/gputypes"
-	"github.com/gogpu/wgpu"
+	"github.com/Zyko0/go-sdl3/sdl"
 
+	"github.com/dkrutsko/oasis/errors"
 	"github.com/dkrutsko/oasis/game"
 	"github.com/dkrutsko/oasis/geometry"
 	"github.com/dkrutsko/oasis/maps"
@@ -23,191 +22,64 @@ import (
 // the aim ray gets the rest.
 const entityBufSize = 65536
 
+// Maximum HUD vertex buffer size in bytes.
+const textBufSize = 8192
+
 ////////////////////////////////////////////////////////////////////////////////
 
-// Renderer manages all WebGPU resources and draw calls
+// Renderer manages all SDL GPU resources and draw calls
 // for the 3D viewer.
 type Renderer struct {
-	dev   *wgpu.Device
-	queue *wgpu.Queue
+	device *sdl.GPUDevice
+	window *sdl.Window
 
-	mapPipe    *wgpu.RenderPipeline
-	entityPipe *wgpu.RenderPipeline
-	pipeLayout *wgpu.PipelineLayout
-	bgLayout   *wgpu.BindGroupLayout
+	mapPipe    *sdl.GPUGraphicsPipeline
+	entityPipe *sdl.GPUGraphicsPipeline
 
-	uniformBuf *wgpu.Buffer
-	bindGroup  *wgpu.BindGroup
-
-	mapBuf      *wgpu.Buffer
+	mapBuf      *sdl.GPUBuffer
 	mapVertices uint32
 
-	entityBuf      *wgpu.Buffer
+	entityBuf      *sdl.GPUBuffer
+	entityData     []byte
 	entityVertices uint32
 
-	hudUniformBuf *wgpu.Buffer
-	hudBindGroup  *wgpu.BindGroup
-	textBuf       *wgpu.Buffer
-	textVertices  uint32
+	textBuf      *sdl.GPUBuffer
+	textData     []byte
+	textVertices uint32
+
+	// Stages the entity and HUD vertices, which are uploaded
+	// at the start of every frame
+	transferBuf *sdl.GPUTransferBuffer
 
 	lastTeam int32
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (r *Renderer) Init(dev *wgpu.Device, format gputypes.TextureFormat) error {
+func (r *Renderer) Init(device *sdl.GPUDevice, window *sdl.Window) error {
 
 	//----------------------------------------------------------------------------//
 
-	r.dev = dev
-	r.queue = dev.Queue()
+	r.device = device
+	r.window = window
 
-	//----------------------------------------------------------------------------//
-
-	// Bind group layout: one uniform buffer (MVP matrix)
-	var err error
-	r.bgLayout, err = dev.CreateBindGroupLayout(&wgpu.BindGroupLayoutDescriptor{
-		Entries: []wgpu.BindGroupLayoutEntry{{
-			Binding:    0,
-			Visibility: wgpu.ShaderStageVertex | wgpu.ShaderStageFragment,
-			Buffer:     &gputypes.BufferBindingLayout{Type: gputypes.BufferBindingTypeUniform},
-		}},
-	})
-	if err != nil {
-		return err
-	}
-
-	r.pipeLayout, err = dev.CreatePipelineLayout(&wgpu.PipelineLayoutDescriptor{
-		BindGroupLayouts: []*wgpu.BindGroupLayout{r.bgLayout},
-	})
-	if err != nil {
-		return err
-	}
-
-	//----------------------------------------------------------------------------//
-
-	// Uniform buffer (64 bytes for mat4x4)
-	r.uniformBuf, err = dev.CreateBuffer(&wgpu.BufferDescriptor{
-		Label: "viewer3d_uniform",
-		Size:  64,
-		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		return err
-	}
-
-	r.bindGroup, err = dev.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Layout: r.bgLayout,
-		Entries: []wgpu.BindGroupEntry{{
-			Binding: 0,
-			Buffer:  r.uniformBuf,
-			Size:    64,
-		}},
-	})
-	if err != nil {
-		return err
-	}
+	format := device.SwapchainTextureFormat(window)
 
 	//----------------------------------------------------------------------------//
 
 	// Map pipeline: solid triangles with alpha blending
-	mapShader, err := dev.CreateShaderModule(&wgpu.ShaderModuleDescriptor{WGSL: mapShaderWGSL})
-	if err != nil {
-		return err
-	}
-	defer mapShader.Release()
-
-	r.mapPipe, err = dev.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
-		Label:  "viewer3d_map",
-		Layout: r.pipeLayout,
-		Vertex: wgpu.VertexState{
-			Module:     mapShader,
-			EntryPoint: "vs_main",
-			Buffers: []wgpu.VertexBufferLayout{{
-				ArrayStride: 12,
-				StepMode:    gputypes.VertexStepModeVertex,
-				Attributes: []gputypes.VertexAttribute{{
-					Format:         gputypes.VertexFormatFloat32x3,
-					Offset:         0,
-					ShaderLocation: 0,
-				}},
-			}},
-		},
-		Primitive: gputypes.PrimitiveState{
-			Topology: gputypes.PrimitiveTopologyTriangleList,
-		},
-		Fragment: &wgpu.FragmentState{
-			Module:     mapShader,
-			EntryPoint: "fs_main",
-			Targets: []gputypes.ColorTargetState{{
-				Format:    format,
-				WriteMask: gputypes.ColorWriteMaskAll,
-				Blend: &gputypes.BlendState{
-					Color: gputypes.BlendComponent{
-						SrcFactor: gputypes.BlendFactorSrcAlpha,
-						DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-						Operation: gputypes.BlendOperationAdd,
-					},
-					Alpha: gputypes.BlendComponent{
-						SrcFactor: gputypes.BlendFactorOne,
-						DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-						Operation: gputypes.BlendOperationAdd,
-					},
-				},
-			}},
-		},
+	var err error
+	r.mapPipe, err = createPipeline(device, mapShaderWGSL, format, 12, []sdl.GPUVertexAttribute{
+		{Location: 0, Format: sdl.GPU_VERTEXELEMENTFORMAT_FLOAT3, Offset: 0},
 	})
 	if err != nil {
 		return err
 	}
-
-	//----------------------------------------------------------------------------//
 
 	// Entity pipeline: colored triangles with alpha blending
-	entShader, err := dev.CreateShaderModule(&wgpu.ShaderModuleDescriptor{WGSL: entityShaderWGSL})
-	if err != nil {
-		return err
-	}
-	defer entShader.Release()
-
-	r.entityPipe, err = dev.CreateRenderPipeline(&wgpu.RenderPipelineDescriptor{
-		Label:  "viewer3d_entity",
-		Layout: r.pipeLayout,
-		Vertex: wgpu.VertexState{
-			Module:     entShader,
-			EntryPoint: "vs_main",
-			Buffers: []wgpu.VertexBufferLayout{{
-				ArrayStride: 28,
-				StepMode:    gputypes.VertexStepModeVertex,
-				Attributes: []gputypes.VertexAttribute{
-					{Format: gputypes.VertexFormatFloat32x3, Offset: 0, ShaderLocation: 0},
-					{Format: gputypes.VertexFormatFloat32x4, Offset: 12, ShaderLocation: 1},
-				},
-			}},
-		},
-		Primitive: gputypes.PrimitiveState{
-			Topology: gputypes.PrimitiveTopologyTriangleList,
-		},
-		Fragment: &wgpu.FragmentState{
-			Module:     entShader,
-			EntryPoint: "fs_main",
-			Targets: []gputypes.ColorTargetState{{
-				Format:    format,
-				WriteMask: gputypes.ColorWriteMaskAll,
-				Blend: &gputypes.BlendState{
-					Color: gputypes.BlendComponent{
-						SrcFactor: gputypes.BlendFactorSrcAlpha,
-						DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-						Operation: gputypes.BlendOperationAdd,
-					},
-					Alpha: gputypes.BlendComponent{
-						SrcFactor: gputypes.BlendFactorOne,
-						DstFactor: gputypes.BlendFactorOneMinusSrcAlpha,
-						Operation: gputypes.BlendOperationAdd,
-					},
-				},
-			}},
-		},
+	r.entityPipe, err = createPipeline(device, entityShaderWGSL, format, 28, []sdl.GPUVertexAttribute{
+		{Location: 0, Format: sdl.GPU_VERTEXELEMENTFORMAT_FLOAT3, Offset: 0},
+		{Location: 1, Format: sdl.GPU_VERTEXELEMENTFORMAT_FLOAT4, Offset: 12},
 	})
 	if err != nil {
 		return err
@@ -215,55 +87,42 @@ func (r *Renderer) Init(dev *wgpu.Device, format gputypes.TextureFormat) error {
 
 	//----------------------------------------------------------------------------//
 
-	// Pre-allocate entity vertex buffer
-	r.entityBuf, err = dev.CreateBuffer(&wgpu.BufferDescriptor{
-		Label: "viewer3d_entities",
+	// Pre-allocate the entity and HUD vertex buffers
+	r.entityBuf, err = device.CreateBuffer(&sdl.GPUBufferCreateInfo{
+		Usage: sdl.GPU_BUFFERUSAGE_VERTEX,
 		Size:  entityBufSize,
-		Usage: wgpu.BufferUsageVertex | wgpu.BufferUsageCopyDst,
 	})
 	if err != nil {
-		return err
+		return errors.New(
+			"failed to create entity buffer",
+			errors.Error("error", err),
+		)
 	}
 
-	//----------------------------------------------------------------------------//
-
-	// HUD: identity MVP for screen-space text
-	r.hudUniformBuf, err = dev.CreateBuffer(&wgpu.BufferDescriptor{
-		Label: "viewer3d_hud_uniform",
-		Size:  64,
-		Usage: wgpu.BufferUsageUniform | wgpu.BufferUsageCopyDst,
+	r.textBuf, err = device.CreateBuffer(&sdl.GPUBufferCreateInfo{
+		Usage: sdl.GPU_BUFFERUSAGE_VERTEX,
+		Size:  textBufSize,
 	})
 	if err != nil {
-		return err
+		return errors.New(
+			"failed to create hud buffer",
+			errors.Error("error", err),
+		)
 	}
 
-	identityData := math.Matrix4Identity.ToSlice32()
-	identityBytes := make([]byte, 64)
-	for i, v := range identityData {
-		binary.LittleEndian.PutUint32(identityBytes[i*4:], sysMath.Float32bits(v))
-	}
-	r.queue.WriteBuffer(r.hudUniformBuf, 0, identityBytes)
-
-	r.hudBindGroup, err = dev.CreateBindGroup(&wgpu.BindGroupDescriptor{
-		Layout: r.bgLayout,
-		Entries: []wgpu.BindGroupEntry{{
-			Binding: 0,
-			Buffer:  r.hudUniformBuf,
-			Size:    64,
-		}},
+	r.transferBuf, err = device.CreateTransferBuffer(&sdl.GPUTransferBufferCreateInfo{
+		Usage: sdl.GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+		Size:  entityBufSize + textBufSize,
 	})
 	if err != nil {
-		return err
+		return errors.New(
+			"failed to create transfer buffer",
+			errors.Error("error", err),
+		)
 	}
 
-	r.textBuf, err = dev.CreateBuffer(&wgpu.BufferDescriptor{
-		Label: "viewer3d_text",
-		Size:  8192,
-		Usage: wgpu.BufferUsageVertex | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		return err
-	}
+	r.entityData = make([]byte, 0, entityBufSize)
+	r.textData = make([]byte, 0, textBufSize)
 
 	//----------------------------------------------------------------------------//
 
@@ -277,13 +136,58 @@ func (r *Renderer) Init(dev *wgpu.Device, format gputypes.TextureFormat) error {
 // LoadMap uploads the map collision geometry to the GPU.
 func (r *Renderer) LoadMap(m *maps.Map) error {
 
+	//----------------------------------------------------------------------------//
+
 	triangles := m.GetTriangles()
 	if len(triangles) == 0 {
 		return nil
 	}
 
-	// Flatten to position-only float32 buffer
-	data := make([]byte, len(triangles)*9*4)
+	r.UnloadMap()
+
+	size := uint32(len(triangles) * 36)
+
+	buf, err := r.device.CreateBuffer(&sdl.GPUBufferCreateInfo{
+		Usage: sdl.GPU_BUFFERUSAGE_VERTEX,
+		Size:  size,
+	})
+	if err != nil {
+		return errors.New(
+			"failed to create map buffer",
+			errors.Int("size", int(size)),
+			errors.Error("error", err),
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// The positions are written straight into the transfer
+	// buffer, so the map is not copied again in Go memory.
+	// SDL frees the transfer buffer once the upload is done.
+	transfer, err := r.device.CreateTransferBuffer(&sdl.GPUTransferBufferCreateInfo{
+		Usage: sdl.GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+		Size:  size,
+	})
+	if err != nil {
+		r.device.ReleaseBuffer(buf)
+		return errors.New(
+			"failed to create transfer buffer",
+			errors.Int("size", int(size)),
+			errors.Error("error", err),
+		)
+	}
+	defer r.device.ReleaseTransferBuffer(transfer)
+
+	ptr, err := r.device.MapTransferBuffer(transfer, false)
+	if err != nil {
+		r.device.ReleaseBuffer(buf)
+		return errors.New(
+			"failed to map transfer buffer",
+			errors.Error("error", err),
+		)
+	}
+
+	data := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), size)
 	for i := range triangles {
 		tri := &triangles[i]
 		off := i * 36
@@ -292,25 +196,43 @@ func (r *Renderer) LoadMap(m *maps.Map) error {
 		putVec3(data[off+24:], tri.V2)
 	}
 
+	r.device.UnmapTransferBuffer(transfer)
+
+	//----------------------------------------------------------------------------//
+
+	cmd, err := r.device.AcquireCommandBuffer()
+	if err != nil {
+		r.device.ReleaseBuffer(buf)
+		return errors.New(
+			"failed to acquire command buffer",
+			errors.Error("error", err),
+		)
+	}
+
+	pass := cmd.BeginCopyPass()
+	pass.UploadToGPUBuffer(
+		&sdl.GPUTransferBufferLocation{TransferBuffer: transfer},
+		&sdl.GPUBufferRegion{Buffer: buf, Size: size},
+		false,
+	)
+	pass.End()
+
+	if err := cmd.Submit(); err != nil {
+		r.device.ReleaseBuffer(buf)
+		return errors.New(
+			"failed to upload map",
+			errors.Error("error", err),
+		)
+	}
+
+	r.mapBuf = buf
 	r.mapVertices = uint32(len(triangles) * 3)
 
-	// Release old buffer if any
-	if r.mapBuf != nil {
-		r.mapBuf.Release()
-	}
+	//----------------------------------------------------------------------------//
 
-	var err error
-	r.mapBuf, err = r.dev.CreateBuffer(&wgpu.BufferDescriptor{
-		Label: "viewer3d_map",
-		Size:  uint64(len(data)),
-		Usage: wgpu.BufferUsageVertex | wgpu.BufferUsageCopyDst,
-	})
-	if err != nil {
-		return err
-	}
-
-	r.queue.WriteBuffer(r.mapBuf, 0, data)
 	return nil
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -319,7 +241,7 @@ func (r *Renderer) LoadMap(m *maps.Map) error {
 func (r *Renderer) UnloadMap() {
 
 	if r.mapBuf != nil {
-		r.mapBuf.Release()
+		r.device.ReleaseBuffer(r.mapBuf)
 		r.mapBuf = nil
 	}
 	r.mapVertices = 0
@@ -336,6 +258,7 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 	//----------------------------------------------------------------------------//
 
 	if action == nil {
+		r.entityData = r.entityData[:0]
 		r.entityVertices = 0
 		return
 	}
@@ -352,8 +275,9 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 		localTeam = r.lastTeam
 	}
 
-	// Build vertex data: [x y z r g b a] per vertex
-	buf := make([]byte, 0, entityBufSize)
+	// Build vertex data: [x y z r g b a] per vertex. The
+	// buffer is reused and uploaded when the frame is drawn.
+	buf := r.entityData[:0]
 
 	//----------------------------------------------------------------------------//
 
@@ -525,11 +449,8 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 		buf = buf[:entityBufSize-entityBufSize%(6*28)]
 	}
 
+	r.entityData = buf
 	r.entityVertices = uint32(len(buf) / 28)
-
-	if r.entityVertices > 0 {
-		r.queue.WriteBuffer(r.entityBuf, 0, buf)
-	}
 
 	//----------------------------------------------------------------------------//
 }
@@ -543,6 +464,7 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 func (r *Renderer) UpdateHud(autoMode bool, vpW, vpH int) {
 
 	if !autoMode {
+		r.textData = r.textData[:0]
 		r.textVertices = 0
 		return
 	}
@@ -563,7 +485,7 @@ func (r *Renderer) UpdateHud(autoMode bool, vpW, vpH int) {
 	}
 
 	var cr, cg, cb, ca float32 = 0.2, 0.9, 0.2, 1.0
-	buf := make([]byte, 0, segments*3*28)
+	buf := r.textData[:0]
 
 	for i := 0; i < segments; i++ {
 		a1 := float64(i) * 2 * sysMath.Pi / float64(segments)
@@ -574,82 +496,135 @@ func (r *Renderer) UpdateHud(autoMode bool, vpW, vpH int) {
 		buf = appendVertex(buf, cx+radius*aspect*sysMath.Cos(a2), cy+radius*sysMath.Sin(a2), 0, cr, cg, cb, ca)
 	}
 
+	r.textData = buf
 	r.textVertices = uint32(len(buf) / 28)
-	if r.textVertices > 0 {
-		r.queue.WriteBuffer(r.textBuf, 0, buf)
-	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// Draw renders the map and entities using the given MVP.
-func (r *Renderer) Draw(sv *wgpu.TextureView, mvp math.Matrix4) error {
+// Draw uploads the entity and HUD vertices of this frame,
+// then renders the map, entities and HUD using the given
+// MVP. Nothing is rendered while the window has no frame to
+// draw into, such as when it is minimized.
+func (r *Renderer) Draw(mvp math.Matrix4) error {
 
 	//----------------------------------------------------------------------------//
 
-	// Upload MVP matrix
-	mvpData := mvp.ToSlice32()
-	mvpBytes := make([]byte, 64)
-	for i, v := range mvpData {
-		binary.LittleEndian.PutUint32(mvpBytes[i*4:], sysMath.Float32bits(v))
+	cmd, err := r.device.AcquireCommandBuffer()
+	if err != nil {
+		return errors.New(
+			"failed to acquire command buffer",
+			errors.Error("error", err),
+		)
 	}
-	r.queue.WriteBuffer(r.uniformBuf, 0, mvpBytes)
 
 	//----------------------------------------------------------------------------//
 
-	enc, err := r.dev.CreateCommandEncoder(nil)
-	if err != nil {
-		return err
+	// Cycling gives the transfer and vertex buffers a fresh
+	// copy when earlier frames still read the last one
+	if len(r.entityData) > 0 || len(r.textData) > 0 {
+		ptr, err := r.device.MapTransferBuffer(r.transferBuf, true)
+		if err != nil {
+			cmd.Cancel()
+			return errors.New(
+				"failed to map transfer buffer",
+				errors.Error("error", err),
+			)
+		}
+
+		staging := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), entityBufSize+textBufSize)
+		copy(staging, r.entityData)
+		copy(staging[entityBufSize:], r.textData)
+
+		r.device.UnmapTransferBuffer(r.transferBuf)
+
+		pass := cmd.BeginCopyPass()
+
+		if len(r.entityData) > 0 {
+			pass.UploadToGPUBuffer(
+				&sdl.GPUTransferBufferLocation{TransferBuffer: r.transferBuf},
+				&sdl.GPUBufferRegion{Buffer: r.entityBuf, Size: uint32(len(r.entityData))},
+				true,
+			)
+		}
+
+		if len(r.textData) > 0 {
+			pass.UploadToGPUBuffer(
+				&sdl.GPUTransferBufferLocation{TransferBuffer: r.transferBuf, Offset: entityBufSize},
+				&sdl.GPUBufferRegion{Buffer: r.textBuf, Size: uint32(len(r.textData))},
+				true,
+			)
+		}
+
+		pass.End()
 	}
 
-	rp, err := enc.BeginRenderPass(&wgpu.RenderPassDescriptor{
-		ColorAttachments: []wgpu.RenderPassColorAttachment{{
-			View:       sv,
-			LoadOp:     gputypes.LoadOpClear,
-			StoreOp:    gputypes.StoreOpStore,
-			ClearValue: gputypes.Color{R: 0.08, G: 0.08, B: 0.10, A: 1},
-		}},
-	})
+	//----------------------------------------------------------------------------//
+
+	// Waits for the window to take another frame, which paces
+	// the viewer to the display refresh rate
+	swapchain, err := cmd.WaitAndAcquireGPUSwapchainTexture(r.window)
 	if err != nil {
-		return err
+		cmd.Cancel()
+		return errors.New(
+			"failed to acquire swapchain texture",
+			errors.Error("error", err),
+		)
 	}
+
+	// The command buffer is still submitted for the uploads
+	if swapchain.Texture == nil {
+		return cmd.Submit()
+	}
+
+	pass := cmd.BeginRenderPass([]sdl.GPUColorTargetInfo{{
+		Texture:    swapchain.Texture,
+		ClearColor: sdl.FColor{R: 0.08, G: 0.08, B: 0.10, A: 1},
+		LoadOp:     sdl.GPU_LOADOP_CLEAR,
+		StoreOp:    sdl.GPU_STOREOP_STORE,
+	}}, nil)
+
+	var uniforms [64]byte
+	putMatrix(uniforms[:], mvp)
+	cmd.PushVertexUniformData(0, uniforms[:])
 
 	//----------------------------------------------------------------------------//
 
 	// Draw map (transparent solid triangles)
 	if r.mapVertices > 0 && r.mapBuf != nil {
-		rp.SetPipeline(r.mapPipe)
-		rp.SetBindGroup(0, r.bindGroup, nil)
-		rp.SetVertexBuffer(0, r.mapBuf, 0)
-		rp.Draw(r.mapVertices, 1, 0, 0)
+		pass.BindGraphicsPipeline(r.mapPipe)
+		pass.BindVertexBuffers([]sdl.GPUBufferBinding{{Buffer: r.mapBuf}})
+		pass.DrawPrimitives(r.mapVertices, 1, 0, 0)
 	}
 
 	// Draw entities (alpha blended line quads)
 	if r.entityVertices > 0 {
-		rp.SetPipeline(r.entityPipe)
-		rp.SetBindGroup(0, r.bindGroup, nil)
-		rp.SetVertexBuffer(0, r.entityBuf, 0)
-		rp.Draw(r.entityVertices, 1, 0, 0)
+		pass.BindGraphicsPipeline(r.entityPipe)
+		pass.BindVertexBuffers([]sdl.GPUBufferBinding{{Buffer: r.entityBuf}})
+		pass.DrawPrimitives(r.entityVertices, 1, 0, 0)
 	}
 
 	// Draw HUD text (screen-space, identity MVP)
 	if r.textVertices > 0 {
-		rp.SetPipeline(r.entityPipe)
-		rp.SetBindGroup(0, r.hudBindGroup, nil)
-		rp.SetVertexBuffer(0, r.textBuf, 0)
-		rp.Draw(r.textVertices, 1, 0, 0)
+		putMatrix(uniforms[:], math.Matrix4Identity)
+		cmd.PushVertexUniformData(0, uniforms[:])
+
+		pass.BindGraphicsPipeline(r.entityPipe)
+		pass.BindVertexBuffers([]sdl.GPUBufferBinding{{Buffer: r.textBuf}})
+		pass.DrawPrimitives(r.textVertices, 1, 0, 0)
 	}
 
 	//----------------------------------------------------------------------------//
 
-	rp.End()
+	pass.End()
 
-	cmds, err := enc.Finish()
-	if err != nil {
-		return err
+	if err := cmd.Submit(); err != nil {
+		return errors.New(
+			"failed to submit command buffer",
+			errors.Error("error", err),
+		)
 	}
 
-	r.queue.Submit(cmds)
 	return nil
 
 	//----------------------------------------------------------------------------//
@@ -660,15 +635,91 @@ func (r *Renderer) Draw(sv *wgpu.TextureView, mvp math.Matrix4) error {
 // Destroy releases all GPU resources.
 func (r *Renderer) Destroy() {
 
-	for _, res := range []interface{ Release() }{
-		r.mapPipe, r.entityPipe, r.pipeLayout, r.bgLayout,
-		r.uniformBuf, r.bindGroup, r.mapBuf, r.entityBuf,
-		r.hudUniformBuf, r.hudBindGroup, r.textBuf,
-	} {
-		if res != nil {
-			res.Release()
+	if r.device == nil {
+		return
+	}
+
+	r.UnloadMap()
+
+	for _, pipe := range []*sdl.GPUGraphicsPipeline{r.mapPipe, r.entityPipe} {
+		if pipe != nil {
+			r.device.ReleaseGraphicsPipeline(pipe)
 		}
 	}
+
+	for _, buf := range []*sdl.GPUBuffer{r.entityBuf, r.textBuf} {
+		if buf != nil {
+			r.device.ReleaseBuffer(buf)
+		}
+	}
+
+	if r.transferBuf != nil {
+		r.device.ReleaseTransferBuffer(r.transferBuf)
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// createPipeline builds an alpha blended triangle pipeline
+// from a WGSL shader and the layout of its vertex buffer.
+func createPipeline(
+	device *sdl.GPUDevice,
+	source string,
+	format sdl.GPUTextureFormat,
+	pitch uint32,
+	attributes []sdl.GPUVertexAttribute,
+) (*sdl.GPUGraphicsPipeline, error) {
+
+	//----------------------------------------------------------------------------//
+
+	vertex, fragment, err := compileShaders(device, source)
+	if err != nil {
+		return nil, err
+	}
+	defer device.ReleaseShader(vertex)
+	defer device.ReleaseShader(fragment)
+
+	//----------------------------------------------------------------------------//
+
+	pipe, err := device.CreateGraphicsPipeline(&sdl.GPUGraphicsPipelineCreateInfo{
+		VertexShader:   vertex,
+		FragmentShader: fragment,
+		VertexInputState: sdl.GPUVertexInputState{
+			VertexBufferDescriptions: []sdl.GPUVertexBufferDescription{{
+				Slot:      0,
+				Pitch:     pitch,
+				InputRate: sdl.GPU_VERTEXINPUTRATE_VERTEX,
+			}},
+			VertexAttributes: attributes,
+		},
+		PrimitiveType: sdl.GPU_PRIMITIVETYPE_TRIANGLELIST,
+		TargetInfo: sdl.GPUGraphicsPipelineTargetInfo{
+			ColorTargetDescriptions: []sdl.GPUColorTargetDescription{{
+				Format: format,
+				BlendState: sdl.GPUColorTargetBlendState{
+					EnableBlend:         true,
+					SrcColorBlendfactor: sdl.GPU_BLENDFACTOR_SRC_ALPHA,
+					DstColorBlendfactor: sdl.GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+					ColorBlendOp:        sdl.GPU_BLENDOP_ADD,
+					SrcAlphaBlendfactor: sdl.GPU_BLENDFACTOR_ONE,
+					DstAlphaBlendfactor: sdl.GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+					AlphaBlendOp:        sdl.GPU_BLENDOP_ADD,
+				},
+			}},
+		},
+	})
+	if err != nil {
+		return nil, errors.New(
+			"failed to create graphics pipeline",
+			errors.Error("error", err),
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	return pipe, nil
+
+	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -678,6 +729,15 @@ func putVec3(dst []byte, v math.Vector3) {
 	binary.LittleEndian.PutUint32(dst[0:], sysMath.Float32bits(float32(v.X)))
 	binary.LittleEndian.PutUint32(dst[4:], sysMath.Float32bits(float32(v.Y)))
 	binary.LittleEndian.PutUint32(dst[8:], sysMath.Float32bits(float32(v.Z)))
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+func putMatrix(dst []byte, m math.Matrix4) {
+
+	for i, v := range m.ToSlice32() {
+		binary.LittleEndian.PutUint32(dst[i*4:], sysMath.Float32bits(v))
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
