@@ -22,7 +22,7 @@ Oasis is a real-time game assistance tool that uses FPGA-based DMA (Direct Memor
 - **Dual FPGA Support** - Separate devices for action and camera reads to avoid USB contention
 - **Overlay Rendering** - Outputs entity data to shared memory for use with Moonlight streaming
 - **3D Map Viewer** - GPU-accelerated viewer using SDL3 (Metal or Vulkan, loaded with purego) for visualizing collision geometry and entities
-- **Cross-Platform** - Targets macOS (Intel + ARM + Universal) and Linux (x86_64/ARM64) in pure Go, without cgo. The input and overlay services do not support Windows yet
+- **Cross-Platform** - Targets macOS (Intel + ARM + Universal), Linux (x86_64/ARM64) and Windows (x86_64) in pure Go, without cgo. On Windows, the overlay and input do not yet notice when Moonlight ends its session
 - **Structured Logging** - JSON or colored text output with debug mode
 - **Health Monitoring** - Goroutine heartbeat detection for service health
 - **Built-in Profiling** - Optional pprof server on localhost:6060, and `./profile.sh` to profile whole sessions
