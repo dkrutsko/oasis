@@ -121,7 +121,7 @@ type entityCache struct {
 	listEntry   uintptr
 	chains      [64]entityChain
 
-	passes int // Scatter passes since the last entity log
+	batches int // Scatter batches since the last entity log
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -324,29 +324,70 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 	// per pointer plus one for its data. Chains that are still
 	// changing after that are skipped for this frame.
 	const maxPasses = 7
+
+	// The FPGA keeps a limited number of bytes of reads in
+	// flight, and a batch that needs more waits several
+	// milliseconds for each extra round. Every request also has
+	// a small chance of stalling for as long, so reads are made
+	// in whole pages, which take one request each. Passes are
+	// split into batches that stay below that limit, using the
+	// pages each part of a batch reads: the entity list pages
+	// and globals, a controller and a pawn with its bones.
+	const maxBatchPages = 36
+	const batchPages = 6
+	const controllerPages = 1
+	const pawnPages = 4
+
 	readSize := uint32(BoneCount * BoneDataSize)
 
 	var localPawnAddr uintptr
 	var settled [64]bool
 	entities := make([]ActionEntity, 64)
 
-	for pass := 0; pass < maxPasses; pass++ {
+	pass := 0
+	first := 0
+	changed := false
 
-		cache.passes++
+	for pass < maxPasses {
+
+		cache.batches++
 		scatter.Clear(pid, leech.ScatterFlagDefault)
 
-		// The entity list is read again to check that it has not
-		// moved since it was cached
+		// The entity list is read again in every batch to check
+		// that it has not moved since it was cached
 		scatter.Prepare(client+offLocalPlayerPawn, 8)
 		scatter.Prepare(client+offEntityList, 8)
 		scatter.Prepare(cache.entListBase+0x10, 8)
 
-		for e := 0; e < 64; e++ {
+		// Queue the chains from `first` until the batch is full
+		end := first
+		pages := batchPages
+
+		for end < 64 {
+			e := end
+			chain := &cache.chains[e]
+
+			if !settled[e] {
+				cost := 0
+				if chain.controller != 0 {
+					cost += controllerPages
+				}
+				if chain.pawn != 0 {
+					cost += pawnPages
+				}
+
+				if pages+cost > maxBatchPages {
+					break
+				}
+				pages += cost
+			}
+
+			end++
+
 			if settled[e] {
 				continue
 			}
 
-			chain := &cache.chains[e]
 			index := uintptr(chain.handle) & 0x7FFF
 
 			scatter.Prepare(cache.listEntry+uintptr(e+1)*0x70, 8)
@@ -376,8 +417,13 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 				scatter.Prepare(chain.sceneNode+offModelState+offBoneArray, 8)
 			}
 
+			// VMM reads a lone read of up to 0x400 bytes as 128
+			// byte requests, so the bones are read as the whole
+			// pages they are on
 			if chain.boneArray != 0 {
-				scatter.Prepare(chain.boneArray, readSize)
+				pageStart := chain.boneArray &^ 0xFFF
+				pageEnd := (chain.boneArray + uintptr(readSize) + 0xFFF) &^ 0xFFF
+				scatter.Prepare(pageStart, uint32(pageEnd-pageStart))
 			}
 		}
 
@@ -405,9 +451,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 			return result
 		}
 
-		changed := false
-
-		for e := 0; e < 64; e++ {
+		for e := first; e < end; e++ {
 			if settled[e] {
 				continue
 			}
@@ -423,9 +467,8 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 			if chain.controller != 0 && fresh.controller != 0 {
 
 				// Pawns of dead and disconnected players never
-				// become entities, and reading their stale memory
-				// made reads several times slower, so their chains
-				// end here
+				// become entities, so their chains end here and
+				// their pawns do not add to the batch
 				alive, _ := scatter.Read(chain.controller+offPawnIsAlive, 1)
 				handle, _ := scatter.ReadInt32(chain.controller + offPawnHandle)
 
@@ -511,9 +554,25 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 			entities[e] = entity
 		}
 
+		// Continue with the chains after this batch that are not
+		// settled yet
+		first = end
+		for first < 64 && settled[first] {
+			first++
+		}
+
+		if first < 64 {
+			continue
+		}
+
+		// Start another pass when a chain changed in this one
 		if !changed {
 			break
 		}
+
+		pass++
+		first = 0
+		changed = false
 	}
 
 	//----------------------------------------------------------------------------//
@@ -558,9 +617,9 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 			logger.Int("total", len(entities)),
 			logger.Int("alive", alive),
 			logger.Bool("has_player", playerIdx >= 0),
-			logger.Int("passes", cache.passes),
+			logger.Int("batches", cache.batches),
 		)
-		cache.passes = 0
+		cache.batches = 0
 	}
 
 	// Calculate distances from local player

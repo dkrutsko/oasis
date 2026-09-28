@@ -52,6 +52,7 @@ while [[ $# -gt 0 ]]; do
 			  trace/        Execution traces, 30 seconds each
 			  heap/         Heap and allocation profiles, every minute
 			  goroutine/    Goroutine dumps, every minute
+			  native/       Memory by region type and malloc zone, every minute
 			  process.tsv   CPU and memory use, every 5 seconds
 
 			EOF
@@ -80,7 +81,7 @@ done
 ## Check                                                                      ##
 ##----------------------------------------------------------------------------##
 
-for _tool in go curl; do
+for _tool in go curl footprint vmmap; do
 	if ! command -v "${_tool}" > /dev/null; then
 		printf -- "\e[1;31mRequired tool %s is not installed\e[0m\n" "${_tool}" >&2
 		exit "${_ERROR_FAILURE}"
@@ -112,6 +113,20 @@ capture() {
 	else
 		rm -f "${file}.part"
 		sleep 1
+	fi
+}
+
+# Saves the output of a command the same way `capture` saves a
+# download, so a cut off snapshot is never kept
+snapshot() {
+
+	local file="$1"
+	shift
+
+	if "$@" > "${file}.part" 2>&1; then
+		mv "${file}.part" "${file}"
+	else
+		rm -f "${file}.part"
 	fi
 }
 
@@ -154,6 +169,23 @@ collect_snapshots() {
 	done
 }
 
+# Records how the memory of Oasis is split between the Go heap,
+# native libraries and GPU buffers while it is running. Memory
+# outside the Go heap does not show up in the heap profiles.
+collect_native() {
+
+	local name
+
+	while kill -0 "${_oasis}" 2> /dev/null; do
+		name="$(date +%H%M%S)"
+
+		snapshot "${_session}/native/${name}.footprint.txt" footprint "${_oasis}"
+		snapshot "${_session}/native/${name}.vmmap.txt" vmmap --summary "${_oasis}"
+
+		sleep "${_SNAPSHOT_SECONDS}"
+	done
+}
+
 # Records the CPU and memory use of Oasis while it is running
 collect_process() {
 
@@ -191,7 +223,7 @@ CGO_ENABLED=0 go build -mod=vendor -tags "viewer3d nofakecgo" -o "${_BINARY}" .
 
 _started="$(date +%Y%m%d-%H%M%S)"
 _session="${PWD}/bin/profiles/${_started}"
-mkdir -p "${_session}/cpu" "${_session}/trace" "${_session}/heap" "${_session}/goroutine"
+mkdir -p "${_session}/cpu" "${_session}/trace" "${_session}/heap" "${_session}/goroutine" "${_session}/native"
 
 _commit="$(git rev-parse --short HEAD 2> /dev/null || printf -- "unknown")"
 _changes="$(git status --porcelain 2> /dev/null | wc -l | tr -d ' ')"
@@ -245,6 +277,9 @@ collect_trace &
 _collectors+=("$!")
 
 collect_snapshots &
+_collectors+=("$!")
+
+collect_native &
 _collectors+=("$!")
 
 collect_process &
