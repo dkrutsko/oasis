@@ -141,11 +141,15 @@ func main() {
 
 	//----------------------------------------------------------------------------//
 
-	// Run in viewer mode if requested
+	// Run in viewer mode if requested. The viewer stops on
+	// SIGINT/SIGTERM like the other services.
 	if cfg.Viewer {
+		ctx, cancel := setupSignals()
+		defer cancel()
+
 		v := overlay.NewViewer()
 
-		err := v.Run()
+		err := v.Run(ctx)
 		v.Close()
 
 		if err != nil {

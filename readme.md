@@ -22,7 +22,7 @@ Oasis is a real-time game assistance tool that uses FPGA-based DMA (Direct Memor
 - **Dual FPGA Support** - Separate devices for action and camera reads to avoid USB contention
 - **Overlay Rendering** - Outputs entity data to shared memory for use with Moonlight streaming
 - **3D Map Viewer** - GPU-accelerated viewer using SDL3 (Metal or Vulkan, loaded with purego) for visualizing collision geometry and entities
-- **Cross-Platform** - Targets macOS (Intel + ARM + Universal) and Linux (x86_64/ARM64). The input and overlay services do not support Windows yet
+- **Cross-Platform** - Targets macOS (Intel + ARM + Universal) and Linux (x86_64/ARM64) in pure Go, without cgo. The input and overlay services do not support Windows yet
 - **Structured Logging** - JSON or colored text output with debug mode
 - **Health Monitoring** - Goroutine heartbeat detection for service health
 - **Built-in Profiling** - Optional pprof server on localhost:6060, and `./profile.sh` to profile whole sessions
@@ -71,7 +71,7 @@ make clean
 make publish
 ```
 
-The release binary is output to `./bin/oasis`. No build tags or extra environment variables are needed, the 3D viewer is part of every build.
+The release binary is output to `./bin/oasis`. Oasis is pure Go and needs no cgo, build tags or extra environment variables. Both viewers are part of every build.
 
 ## Usage
 
@@ -86,7 +86,7 @@ oasis [flags]
 | `--version` | | Print version info and exit |
 | `--debug` | | Enable verbose debug logging |
 | `--json` | | Enable JSON-formatted output |
-| `--viewer` | | Launch the debug overlay viewer |
+| `--viewer` | | Preview the overlay in a window. Moonlight must be running, since it creates the overlay's shared memory |
 | `--viewer3d` | | Launch the GPU-accelerated 3D map viewer |
 | `--pprof` | | Start pprof server on localhost:6060 |
 | `--action` | First device | FPGA device index for action/entity reads |
@@ -110,6 +110,9 @@ oasis --rate 120
 
 # Launch the 3D map viewer for debugging
 oasis --viewer3d
+
+# Preview the overlay while Oasis and Moonlight are running
+oasis --viewer
 
 # Run with JSON logging and debug output
 oasis --debug --json
@@ -145,7 +148,7 @@ oasis/
 	logger/          Structured JSON/text logging
 	maps/            Map collision geometry loading (.tri.zst and .tri files) and BVH acceleration
 	math/            Vector/matrix math library (Vector2/3/4, Matrix3/4, Quaternion)
-	overlay/         Overlay renderer (shared memory output for Moonlight)
+	overlay/         Overlay renderer (shared memory output for Moonlight) and its preview window
 	shm/             Cross-platform shared memory (SysV on Unix, Windows API)
 	viewer3d/        GPU-accelerated 3D map viewer (SDL3) with FPS camera
 	errors/          Custom structured error handling
@@ -171,6 +174,6 @@ The application runs as a set of concurrent services managed by an `errgroup`:
 
 The entity reader keeps the pointers from each entity list slot to its player data between frames. Every frame reads them again together with the data in batched scatter reads, and only uses the data when none of them changed. Batches are sized to what the FPGA can keep in flight, since reads beyond that stall for several milliseconds.
 
-The 3D viewer embeds the SDL3 library and loads it at runtime, so nothing has to be installed. Its WGSL shaders are compiled at startup with naga into MSL for Metal or SPIR-V for Vulkan.
+Both viewers embed the SDL3 library and load it at runtime, so nothing has to be installed. The WGSL shaders of the 3D viewer are compiled at startup with naga into MSL for Metal or SPIR-V for Vulkan.
 
 Graceful shutdown is handled via SIGINT/SIGTERM with a 2-second timeout before force exit.
