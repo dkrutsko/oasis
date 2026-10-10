@@ -21,16 +21,16 @@ const (
 	// Body capsule cross-section semi-axes. For a
 	// roughly vertical spine these correspond to world
 	// X and Y in the horizontal plane.
-	TriggerBodyRadiusX = 5.0
-	TriggerBodyRadiusY = 4.0
+	TriggerBodyRadiusX = 4.5
+	TriggerBodyRadiusY = 3.5
 
 	// Limb capsule radii. Each value is the radius of
 	// the capsule connecting the two bones of that
 	// segment.
-	TriggerUpperArmRadius = 3.5
-	TriggerForearmRadius  = 3.0
-	TriggerThighRadius    = 4.0
-	TriggerShinRadius     = 3.5
+	TriggerUpperArmRadius = 3.0
+	TriggerForearmRadius  = 2.5
+	TriggerThighRadius    = 3.5
+	TriggerShinRadius     = 3.0
 
 	// Minimum time between trigger fires to avoid spamming
 	// clicks faster than the game can register.

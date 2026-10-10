@@ -236,6 +236,18 @@ func (g *Game) readBombInfo(
 			info.Origin, _ = ReadVector3(memory, sceneNode+offAbsOrigin)
 		}
 
+		// Resolve the planter so they can be highlighted
+		ownerHandle, err := memory.ReadInt32(plantedAddr + offOwnerEntity)
+		if err == nil && ownerHandle != 0 && ownerHandle != -1 {
+			info.Carrier = resolveEntitySlot(ownerHandle, pawnHandles)
+			if info.Carrier == -1 {
+				ownerIdx := int(ownerHandle & 0x7FFF)
+				if ownerIdx >= 1 && ownerIdx <= 64 {
+					info.Carrier = ownerIdx - 1
+				}
+			}
+		}
+
 		return info
 	}
 
@@ -470,8 +482,6 @@ func (g *Game) scanEntities(
 	}
 
 	//----------------------------------------------------------------------------//
-
-	g.c4Addr = 0
 
 	foundC4 := !scanC4
 	foundPlayerRes := !scanHostages || g.playerResAddr != 0
