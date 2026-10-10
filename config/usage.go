@@ -37,6 +37,10 @@ ARGUMENTS
 	-viewer3d (false) - boolean
 	 Launch the 3D map viewer to visualize collision geometry and entities.
 
+	-trigger-debug (false) - boolean
+	 Render triggerbot wireframes on the overlay without enabling the
+	 triggerbot. Useful for tuning hit shape parameters.
+
 	-maps ("./maps") - string
 	 Directory containing .tri or .tri.zst map collision files for
 	 line-of-sight checks. Pass an empty value to disable them.

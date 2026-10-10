@@ -17,12 +17,12 @@ const (
 	BoneSpine2        = 4
 	BoneSpine1        = 3
 	BonePelvis        = 2
-	BoneLeftShoulder  = 8
-	BoneLeftElbow     = 11
-	BoneLeftHand      = 15
+	BoneLeftShoulder  = 9
+	BoneLeftElbow     = 10
+	BoneLeftHand      = 11
 	BoneRightShoulder = 13
 	BoneRightElbow    = 14
-	BoneRightHand     = 16
+	BoneRightHand     = 15
 	BoneLeftHip       = 17
 	BoneLeftKnee      = 18
 	BoneLeftFoot      = 19

@@ -249,7 +249,7 @@ func main() {
 	//----------------------------------------------------------------------------//
 
 	// Start the overlay renderer
-	o := overlay.NewOverlay(g, g.GetTrigger())
+	o := overlay.NewOverlay(g, g.GetTrigger(), cfg.TriggerDebug)
 	defer o.Close()
 	o.Start(group, gctx)
 
@@ -270,47 +270,50 @@ func main() {
 	// Start the triggerbot evaluation loop. The trigger is
 	// active only while middle mouse button is held down,
 	// detected via the /oasis_keys shared memory segment
-	// written by Moonlight.
-	trigger := g.GetTrigger()
-	triggerHb := health.Register("trigger")
+	// written by Moonlight. Skipped when --trigger-debug is
+	// set so that the wireframes render without firing.
+	if !cfg.TriggerDebug {
+		trigger := g.GetTrigger()
+		triggerHb := health.Register("trigger")
 
-	group.Go(func() error {
-		logger.Dbg("starting trigger evaluator")
+		group.Go(func() error {
+			logger.Dbg("starting trigger evaluator")
 
-		for {
-			triggerHb.Beat()
+			for {
+				triggerHb.Beat()
 
-			if gctx.Err() != nil {
-				logger.Dbg("stopping trigger evaluator")
-				return nil
+				if gctx.Err() != nil {
+					logger.Dbg("stopping trigger evaluator")
+					return nil
+				}
+
+				// Toggle trigger based on middle mouse hold state
+				trigger.Enabled.Store(keys.IsMouseDown(input.KeysMouseMiddle))
+
+				action := g.GetActionState()
+				result := trigger.Evaluate(action, g.GetCurrentMap())
+
+				if result.Active && inp.IsConnected() {
+					logger.Dbg("trigger fired",
+						logger.Int("bone", result.Bone),
+						logger.Float64("dist", result.Dist),
+						logger.Uint32("pending", inp.GetPending()),
+					)
+					inp.MousePress(input.ButtonLeft)
+					time.Sleep(15 * time.Millisecond)
+					inp.MouseRelease(input.ButtonLeft)
+				}
+
+				// Wait for new game data before evaluating again
+				select {
+				case <-gctx.Done():
+					logger.Dbg("stopping trigger evaluator")
+					return nil
+				case <-g.GetUpdated():
+				}
 			}
-
-			// Toggle trigger based on middle mouse hold state
-			trigger.Enabled.Store(keys.IsMouseDown(input.KeysMouseMiddle))
-
-			action := g.GetActionState()
-			result := trigger.Evaluate(action, g.GetCurrentMap())
-
-			if result.Active && inp.IsConnected() {
-				logger.Dbg("trigger fired",
-					logger.Int("bone", result.Bone),
-					logger.Float64("dist", result.Dist),
-					logger.Uint32("pending", inp.GetPending()),
-				)
-				inp.MousePress(input.ButtonLeft)
-				time.Sleep(15 * time.Millisecond)
-				inp.MouseRelease(input.ButtonLeft)
-			}
-
-			// Wait for new game data before evaluating again
-			select {
-			case <-gctx.Done():
-				logger.Dbg("stopping trigger evaluator")
-				return nil
-			case <-g.GetUpdated():
-			}
-		}
-	})
+		})
+	}
 
 	//----------------------------------------------------------------------------//
 

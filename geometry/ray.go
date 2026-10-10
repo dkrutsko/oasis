@@ -146,6 +146,53 @@ func (r Ray) IntersectSphere(sphere Sphere) (float64, bool) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// IntersectEllipsoid tests for intersection with an axis-aligned ellipsoid.
+// The test transforms the ray into a scaled space where the ellipsoid becomes
+// a unit sphere. The returned distance is in the original ray's units.
+func (r Ray) IntersectEllipsoid(ellipsoid Ellipsoid) (float64, bool) {
+
+	// Scale origin and direction so the ellipsoid maps to a unit sphere
+	oc := math.Vector3{
+		X: (r.Origin.X - ellipsoid.Center.X) / ellipsoid.RadiusX,
+		Y: (r.Origin.Y - ellipsoid.Center.Y) / ellipsoid.RadiusY,
+		Z: (r.Origin.Z - ellipsoid.Center.Z) / ellipsoid.RadiusZ,
+	}
+
+	dir := math.Vector3{
+		X: r.Direction.X / ellipsoid.RadiusX,
+		Y: r.Direction.Y / ellipsoid.RadiusY,
+		Z: r.Direction.Z / ellipsoid.RadiusZ,
+	}
+
+	a := dir.Dot(dir)
+	b := 2 * oc.Dot(dir)
+	c := oc.Dot(oc) - 1
+
+	discriminant := b*b - 4*a*c
+
+	if discriminant < 0 {
+		return 0, false
+	}
+
+	sqrtDisc := sysMath.Sqrt(discriminant)
+
+	// Try nearest intersection first
+	t := (-b - sqrtDisc) / (2 * a)
+	if t >= 0 {
+		return t, true
+	}
+
+	// Try far intersection (origin may be inside the ellipsoid)
+	t = (-b + sqrtDisc) / (2 * a)
+	if t >= 0 {
+		return t, true
+	}
+
+	return 0, false
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // IntersectBox tests for intersection with an axis-aligned box using the
 // slab method. Returns the distance along the ray and true if an intersection
 // was found.
@@ -275,6 +322,134 @@ func (r Ray) IntersectCapsule(capsule Capsule) (float64, bool) {
 	}
 
 	return 0, false
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// IntersectEllipticalCapsule tests for intersection with a capsule whose
+// cross-section is an ellipse. The cylinder body and each hemispherical cap
+// are tested separately against the ray. Each cap is an oriented half-
+// ellipsoid whose axis extent equals the larger of the two cross-section
+// radii. Returns the distance along the ray and true if an intersection
+// was found.
+func (r Ray) IntersectEllipticalCapsule(ec EllipticalCapsule) (float64, bool) {
+
+	//------------------------------------------------------------------------//
+
+	axis := ec.End.Sub(ec.Start)
+	axisLenSq := axis.LengthSq()
+	if axisLenSq < 1e-20 {
+		return 0, false
+	}
+
+	axisLen := sysMath.Sqrt(axisLenSq)
+	axisNorm := axis.MulScalar(1.0 / axisLen)
+	uDir, vDir := ellipticalCapsuleBasis(axisNorm, ec.Rotation)
+
+	// Decompose the ray into the capsule's local frame
+	oc := r.Origin.Sub(ec.Start)
+	ocA := oc.Dot(axisNorm)
+	ocU := oc.Dot(uDir)
+	ocV := oc.Dot(vDir)
+
+	dA := r.Direction.Dot(axisNorm)
+	dU := r.Direction.Dot(uDir)
+	dV := r.Direction.Dot(vDir)
+
+	invA2 := 1.0 / (ec.RadiusA * ec.RadiusA)
+	invB2 := 1.0 / (ec.RadiusB * ec.RadiusB)
+
+	best := sysMath.MaxFloat64
+
+	//------------------------------------------------------------------------//
+
+	// Cylinder body: solve the elliptical cylinder quadratic
+	// and clip the hit to the segment [0, axisLen]
+	qa := dU*dU*invA2 + dV*dV*invB2
+	qb := ocU*dU*invA2 + ocV*dV*invB2
+	qc := ocU*ocU*invA2 + ocV*ocV*invB2 - 1
+
+	disc := qb*qb - qa*qc
+	if disc >= 0 {
+		sqrtDisc := sysMath.Sqrt(disc)
+
+		t := (-qb - sqrtDisc) / qa
+		s := ocA + t*dA
+		if t >= 0 && s >= 0 && s <= axisLen {
+			best = t
+		}
+
+		if best == sysMath.MaxFloat64 {
+			t = (-qb + sqrtDisc) / qa
+			s = ocA + t*dA
+			if t >= 0 && s >= 0 && s <= axisLen {
+				best = t
+			}
+		}
+	}
+
+	//------------------------------------------------------------------------//
+
+	// Each cap is a half-ellipsoid with semi-axes (RadiusA,
+	// RadiusB, capR) along (u, v, axisNorm). The axis extent
+	// uses the larger cross-section radius so the cap matches
+	// a standard hemisphere when both radii are equal.
+	capR := sysMath.Max(ec.RadiusA, ec.RadiusB)
+	invCapR2 := 1.0 / (capR * capR)
+
+	// Start cap: center = Start, valid half-space s <= 0
+	ea := dU*dU*invA2 + dV*dV*invB2 + dA*dA*invCapR2
+	eb := ocU*dU*invA2 + ocV*dV*invB2 + ocA*dA*invCapR2
+	capC := ocU*ocU*invA2 + ocV*ocV*invB2 + ocA*ocA*invCapR2 - 1
+
+	disc = eb*eb - ea*capC
+	if disc >= 0 {
+		sqrtDisc := sysMath.Sqrt(disc)
+
+		t := (-eb - sqrtDisc) / ea
+		if t >= 0 && t < best && (ocA+t*dA) <= 0 {
+			best = t
+		}
+
+		t = (-eb + sqrtDisc) / ea
+		if t >= 0 && t < best && (ocA+t*dA) <= 0 {
+			best = t
+		}
+	}
+
+	// End cap: center = End, valid half-space s >= 0
+	ocEnd := r.Origin.Sub(ec.End)
+	ocEndA := ocEnd.Dot(axisNorm)
+	ocEndU := ocEnd.Dot(uDir)
+	ocEndV := ocEnd.Dot(vDir)
+
+	eb = ocEndU*dU*invA2 + ocEndV*dV*invB2 + ocEndA*dA*invCapR2
+	capC = ocEndU*ocEndU*invA2 + ocEndV*ocEndV*invB2 + ocEndA*ocEndA*invCapR2 - 1
+
+	disc = eb*eb - ea*capC
+	if disc >= 0 {
+		sqrtDisc := sysMath.Sqrt(disc)
+
+		t := (-eb - sqrtDisc) / ea
+		if t >= 0 && t < best && (ocEndA+t*dA) >= 0 {
+			best = t
+		}
+
+		t = (-eb + sqrtDisc) / ea
+		if t >= 0 && t < best && (ocEndA+t*dA) >= 0 {
+			best = t
+		}
+	}
+
+	//------------------------------------------------------------------------//
+
+	if best < sysMath.MaxFloat64 {
+		return best, true
+	}
+
+	return 0, false
+
+	//------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////

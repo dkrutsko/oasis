@@ -30,6 +30,10 @@ type Config struct {
 	// Launches the 3D map viewer window.
 	Viewer3d bool
 
+	// Renders triggerbot wireframes without enabling the
+	// triggerbot itself.
+	TriggerDebug bool
+
 	// FPGA device index for action/entity reads.
 	Action int
 
@@ -88,6 +92,7 @@ func LoadConfig() (*Config, error) {
 	flagSet.BoolVar(&result.Viewer, "viewer", false, "")
 	flagSet.BoolVar(&result.Pprof, "pprof", false, "")
 	flagSet.BoolVar(&result.Viewer3d, "viewer3d", false, "")
+	flagSet.BoolVar(&result.TriggerDebug, "trigger-debug", false, "")
 	flagSet.IntVar(&result.Action, "action", -1, "")
 	flagSet.IntVar(&result.Camera, "camera", -1, "")
 	flagSet.StringVar(&result.Maps, "maps", "./maps", "")

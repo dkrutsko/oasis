@@ -9,7 +9,9 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/dkrutsko/oasis/game"
+	"github.com/dkrutsko/oasis/geometry"
 	"github.com/dkrutsko/oasis/logger"
+	"github.com/dkrutsko/oasis/maps"
 	"github.com/dkrutsko/oasis/math"
 )
 
@@ -31,8 +33,9 @@ const (
 // Overlay renders game entity positions into a shared memory
 // region for consumption by Moonlight or the debug viewer.
 type Overlay struct {
-	game    *game.Game
-	trigger *game.Trigger
+	game         *game.Game
+	trigger      *game.Trigger
+	triggerDebug bool
 
 	// Last known local team for rendering when the player
 	// pawn is not valid (e.g. dead). Only the render loop
@@ -44,10 +47,12 @@ type Overlay struct {
 
 // NewOverlay creates an overlay ready to start its render loop.
 // The shared memory connection is established lazily during the
-// render loop once Moonlight creates the segment.
-func NewOverlay(g *game.Game, trigger *game.Trigger) *Overlay {
+// render loop once Moonlight creates the segment. When
+// `triggerDebug` is true, triggerbot wireframes are rendered
+// regardless of the trigger's enabled state.
+func NewOverlay(g *game.Game, trigger *game.Trigger, triggerDebug bool) *Overlay {
 
-	return &Overlay{game: g, trigger: trigger}
+	return &Overlay{game: g, trigger: trigger, triggerDebug: triggerDebug}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -297,70 +302,78 @@ func (o *Overlay) renderEntities(
 
 	viewport := math.Size{W: int(vpW), H: int(vpH)}
 
-	for i := range action.Entities {
-		entity := &action.Entities[i]
+	// In trigger-debug mode, skip normal entity rendering
+	// so only the wireframes are visible
+	if !o.triggerDebug {
+		for i := range action.Entities {
+			entity := &action.Entities[i]
 
-		// Skip local player and invalid entities
-		if !entity.Valid || entity == action.Player {
-			continue
-		}
-
-		// Skip spectators
-		if entity.Team <= 1 {
-			continue
-		}
-
-		isEnemy := localTeam != 0 && entity.Team != localTeam
-		isCarrier := game.IsObjectiveCarrier(action, entity.Index)
-
-		if isEnemy {
-			var c color.NRGBA
-			if isCarrier {
-				c = color.NRGBA{180, 80, 255, 255}
-			} else if entity.Health > 70 {
-				c = color.NRGBA{50, 220, 50, 255}
-			} else if entity.Health > 30 {
-				c = color.NRGBA{255, 160, 30, 255}
-			} else {
-				c = color.NRGBA{255, 50, 50, 255}
+			// Skip local player and invalid entities
+			if !entity.Valid || entity == action.Player {
+				continue
 			}
-			o.renderSkeleton(dc, entity, mvp, viewport, vpX, vpY, c)
-		} else {
-			headScreen, headVisible := math.ProjectToScreenMvp(
-				entity.Head, viewport, mvp,
-			)
 
-			if headVisible {
-				headScreen.X += vpX
-				headScreen.Y += vpY
+			// Skip spectators
+			if entity.Team <= 1 {
+				continue
+			}
 
-				c := color.NRGBA{50, 200, 50, 150}
+			isEnemy := localTeam != 0 && entity.Team != localTeam
+			isCarrier := game.IsObjectiveCarrier(action, entity.Index)
+
+			if isEnemy {
+				var c color.NRGBA
 				if isCarrier {
 					c = color.NRGBA{180, 80, 255, 255}
+				} else if entity.Health > 70 {
+					c = color.NRGBA{50, 220, 50, 255}
+				} else if entity.Health > 30 {
+					c = color.NRGBA{255, 160, 30, 255}
+				} else {
+					c = color.NRGBA{255, 50, 50, 255}
 				}
+				o.renderSkeleton(dc, entity, mvp, viewport, vpX, vpY, c)
+			} else {
+				headScreen, headVisible := math.ProjectToScreenMvp(
+					entity.Head, viewport, mvp,
+				)
 
-				dc.DrawCircle(headScreen.X, headScreen.Y, 3, c)
+				if headVisible {
+					headScreen.X += vpX
+					headScreen.Y += vpY
+
+					c := color.NRGBA{50, 200, 50, 150}
+					if isCarrier {
+						c = color.NRGBA{180, 80, 255, 255}
+					}
+
+					dc.DrawCircle(headScreen.X, headScreen.Y, 3, c)
+				}
 			}
 		}
-	}
 
-	// Bomb and hostage world position markers
-	purple := color.NRGBA{180, 80, 255, 255}
+		// Bomb and hostage world position markers
+		purple := color.NRGBA{180, 80, 255, 255}
 
-	if action.Bomb != nil && !action.Bomb.Origin.IsZero() &&
-		(action.Bomb.Dropped || action.Bomb.Planted) {
+		if action.Bomb != nil && !action.Bomb.Origin.IsZero() &&
+			(action.Bomb.Dropped || action.Bomb.Planted) {
 
-		o.renderMarker(dc, action.Bomb.Origin, mvp, viewport, vpX, vpY, purple)
-	}
-
-	for i := range action.Hostages {
-		h := &action.Hostages[i]
-		if h.Rescued || h.Origin.IsZero() {
-			continue
+			o.renderMarker(dc, action.Bomb.Origin, mvp, viewport, vpX, vpY, purple)
 		}
 
-		o.renderMarker(dc, h.Origin, mvp, viewport, vpX, vpY, purple)
+		for i := range action.Hostages {
+			h := &action.Hostages[i]
+			if h.Rescued || h.Origin.IsZero() {
+				continue
+			}
+
+			o.renderMarker(dc, h.Origin, mvp, viewport, vpX, vpY, purple)
+		}
 	}
+
+	// Triggerbot debug wireframes
+	m := o.game.GetCurrentMap()
+	o.renderTriggerDebug(dc, action, m, localTeam, mvp, viewport, vpX, vpY)
 
 }
 
@@ -533,4 +546,353 @@ func (o *Overlay) renderMarker(
 	}
 
 	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// renderTriggerDebug draws wireframe outlines of the triggerbot
+// hit shapes (head ellipsoid and body capsule) for each enemy
+// entity. Active when `--trigger-debug` is set or when the
+// triggerbot is enabled via the activation key.
+func (o *Overlay) renderTriggerDebug(
+	dc *Canvas,
+	action *game.ActionState,
+	m *maps.Map,
+	localTeam int32,
+	mvp math.Matrix4,
+	viewport math.Size,
+	vpX, vpY float64,
+) {
+
+	//----------------------------------------------------------------------------//
+
+	if !o.triggerDebug {
+		return
+	}
+
+	//----------------------------------------------------------------------------//
+
+	cyan := color.NRGBA{0, 255, 255, 255}
+	red := color.NRGBA{255, 50, 50, 255}
+	const segments = 16
+	const lineWidth = 1
+
+	headRx := float64(game.TriggerHeadRadiusX)
+	headRy := float64(game.TriggerHeadRadiusY)
+	headRz := float64(game.TriggerHeadRadiusZ)
+	bodyRX := float64(game.TriggerBodyRadiusX)
+	bodyRY := float64(game.TriggerBodyRadiusY)
+
+	// Build the aim ray from the local player so we can
+	// highlight whichever shape the crosshair intersects
+	var aimRay geometry.Ray
+	hasAim := false
+
+	player := action.Player
+	if player != nil {
+		var eyePos math.Vector3
+		if player.Bones.Valid && !player.Bones.Pos[game.BoneHead].IsZero() {
+			eyePos = player.Bones.Pos[game.BoneHead]
+		} else {
+			eyePos = math.Vector3{
+				X: player.Origin.X,
+				Y: player.Origin.Y,
+				Z: player.Origin.Z + 64.0,
+			}
+		}
+
+		yawRad := player.Angles.Y * sysMath.Pi / 180.0
+		pitchRad := player.Angles.X * sysMath.Pi / 180.0
+
+		aimRay = geometry.Ray{
+			Origin: eyePos,
+			Direction: math.Vector3{
+				X: sysMath.Cos(pitchRad) * sysMath.Cos(yawRad),
+				Y: sysMath.Cos(pitchRad) * sysMath.Sin(yawRad),
+				Z: -sysMath.Sin(pitchRad),
+			},
+		}
+		hasAim = true
+	}
+
+	//----------------------------------------------------------------------------//
+
+	for i := range action.Entities {
+		entity := &action.Entities[i]
+
+		if !entity.Valid || entity == action.Player || !entity.Bones.Valid {
+			continue
+		}
+
+		if entity.Team == localTeam || entity.Team <= 1 {
+			continue
+		}
+
+		headPos := entity.Bones.Pos[game.BoneHead]
+		neckPos := entity.Bones.Pos[game.BoneNeck]
+		pelvisPos := entity.Bones.Pos[game.BonePelvis]
+
+		// Test aim ray against each shape to pick the color.
+		// A geometry hit is suppressed when the map blocks the
+		// line of sight, matching the real triggerbot logic.
+		headHit := false
+		bodyHit := false
+
+		if hasAim {
+			if !headPos.IsZero() {
+				dist, hit := aimRay.IntersectEllipsoid(geometry.Ellipsoid{
+					Center:  headPos,
+					RadiusX: game.TriggerHeadRadiusX,
+					RadiusY: game.TriggerHeadRadiusY,
+					RadiusZ: game.TriggerHeadRadiusZ,
+				})
+				if hit {
+					headHit = m == nil || m.IsVisible(aimRay.Origin, aimRay.GetPoint(dist))
+				}
+			}
+			if !neckPos.IsZero() && !pelvisPos.IsZero() {
+				entYaw := entity.Angles.Y * sysMath.Pi / 180.0
+				dist, hit := aimRay.IntersectEllipticalCapsule(geometry.EllipticalCapsule{
+					Start:    neckPos,
+					End:      pelvisPos,
+					RadiusA:  game.TriggerBodyRadiusY,
+					RadiusB:  game.TriggerBodyRadiusX,
+					Rotation: entYaw,
+				})
+				if hit {
+					bodyHit = m == nil || m.IsVisible(aimRay.Origin, aimRay.GetPoint(dist))
+				}
+			}
+		}
+
+		// Head ellipsoid: three great ellipses along the
+		// major planes (XY, XZ, YZ)
+		if !headPos.IsZero() {
+			axisX := math.Vector3{X: headRx}
+			axisY := math.Vector3{Y: headRy}
+			axisZ := math.Vector3{Z: headRz}
+
+			headColor := cyan
+			if headHit {
+				headColor = red
+			}
+
+			o.renderWireEllipse(dc, headPos, axisX, axisY, segments, lineWidth, mvp, viewport, vpX, vpY, headColor)
+			o.renderWireEllipse(dc, headPos, axisX, axisZ, segments, lineWidth, mvp, viewport, vpX, vpY, headColor)
+			o.renderWireEllipse(dc, headPos, axisY, axisZ, segments, lineWidth, mvp, viewport, vpX, vpY, headColor)
+		}
+
+		// Limb capsules connecting adjacent bones
+		limbSegs := [...]struct {
+			startBone int
+			endBone   int
+			radius    float64
+		}{
+			{game.BoneLeftShoulder, game.BoneLeftElbow, game.TriggerUpperArmRadius},
+			{game.BoneLeftElbow, game.BoneLeftHand, game.TriggerForearmRadius},
+			{game.BoneRightShoulder, game.BoneRightElbow, game.TriggerUpperArmRadius},
+			{game.BoneRightElbow, game.BoneRightHand, game.TriggerForearmRadius},
+			{game.BoneLeftHip, game.BoneLeftKnee, game.TriggerThighRadius},
+			{game.BoneLeftKnee, game.BoneLeftFoot, game.TriggerShinRadius},
+			{game.BoneRightHip, game.BoneRightKnee, game.TriggerThighRadius},
+			{game.BoneRightKnee, game.BoneRightFoot, game.TriggerShinRadius},
+		}
+
+		for _, seg := range limbSegs {
+			startPos := entity.Bones.Pos[seg.startBone]
+			endPos := entity.Bones.Pos[seg.endBone]
+			if startPos.IsZero() || endPos.IsZero() {
+				continue
+			}
+
+			limbHit := false
+			if hasAim {
+				dist, hit := aimRay.IntersectCapsule(geometry.Capsule{
+					Start:  startPos,
+					End:    endPos,
+					Radius: seg.radius,
+				})
+				if hit {
+					limbHit = m == nil || m.IsVisible(aimRay.Origin, aimRay.GetPoint(dist))
+				}
+			}
+
+			limbColor := cyan
+			if limbHit {
+				limbColor = red
+			}
+
+			axis := endPos.Sub(startPos)
+			axisLen := axis.Length()
+			if axisLen < 0.01 {
+				continue
+			}
+
+			axisNorm := axis.MulScalar(1.0 / axisLen)
+
+			// Build perpendicular basis for the capsule
+			ref := math.Vector3{Z: 1}
+			if sysMath.Abs(axisNorm.Z) > 0.9 {
+				ref = math.Vector3{X: 1}
+			}
+
+			uDir := axisNorm.Cross(ref).Normalize()
+			vDir := axisNorm.Cross(uDir).Normalize()
+			u := uDir.MulScalar(seg.radius)
+			v := vDir.MulScalar(seg.radius)
+
+			// Circles at both ends
+			o.renderWireEllipse(dc, startPos, u, v, segments, lineWidth, mvp, viewport, vpX, vpY, limbColor)
+			o.renderWireEllipse(dc, endPos, u, v, segments, lineWidth, mvp, viewport, vpX, vpY, limbColor)
+
+			// Connecting lines at four cardinal directions
+			for s := 0; s < 4; s++ {
+				t := 2 * sysMath.Pi * float64(s) / 4.0
+				offset := u.MulScalar(sysMath.Cos(t)).Add(v.MulScalar(sysMath.Sin(t)))
+				p0 := startPos.Add(offset)
+				p1 := endPos.Add(offset)
+
+				sp0, v0 := math.ProjectToScreenMvp(p0, viewport, mvp)
+				sp1, v1 := math.ProjectToScreenMvp(p1, viewport, mvp)
+				if v0 && v1 {
+					dc.DrawLine(sp0.X+vpX, sp0.Y+vpY, sp1.X+vpX, sp1.Y+vpY, lineWidth, limbColor)
+				}
+			}
+
+			// Hemispherical caps
+			capDirStart := axisNorm.Neg().MulScalar(seg.radius)
+			capDirEnd := axisNorm.MulScalar(seg.radius)
+
+			o.renderWireArc(dc, startPos, u, capDirStart, segments/2, lineWidth, mvp, viewport, vpX, vpY, limbColor)
+			o.renderWireArc(dc, startPos, v, capDirStart, segments/2, lineWidth, mvp, viewport, vpX, vpY, limbColor)
+			o.renderWireArc(dc, endPos, u, capDirEnd, segments/2, lineWidth, mvp, viewport, vpX, vpY, limbColor)
+			o.renderWireArc(dc, endPos, v, capDirEnd, segments/2, lineWidth, mvp, viewport, vpX, vpY, limbColor)
+		}
+
+		// Body capsule: elliptical cross-section circles at
+		// the cylinder ends, connecting lines, and
+		// hemispherical end caps
+		if !neckPos.IsZero() && !pelvisPos.IsZero() {
+			entYaw := entity.Angles.Y * sysMath.Pi / 180.0
+			ec := geometry.EllipticalCapsule{
+				Start:    neckPos,
+				End:      pelvisPos,
+				RadiusA:  bodyRY,
+				RadiusB:  bodyRX,
+				Rotation: entYaw,
+			}
+
+			uDir, vDir := ec.GetBasis()
+			u := uDir.MulScalar(bodyRY)
+			v := vDir.MulScalar(bodyRX)
+
+			axis := pelvisPos.Sub(neckPos)
+			axisLen := axis.Length()
+			if axisLen > 0.01 {
+				axisNorm := axis.MulScalar(1.0 / axisLen)
+
+				bodyColor := cyan
+				if bodyHit {
+					bodyColor = red
+				}
+
+				// Elliptical cross-section at both ends
+				o.renderWireEllipse(dc, neckPos, u, v, segments, lineWidth, mvp, viewport, vpX, vpY, bodyColor)
+				o.renderWireEllipse(dc, pelvisPos, u, v, segments, lineWidth, mvp, viewport, vpX, vpY, bodyColor)
+
+				// Connecting lines at four cardinal directions
+				for s := 0; s < 4; s++ {
+					t := 2 * sysMath.Pi * float64(s) / 4.0
+					offset := u.MulScalar(sysMath.Cos(t)).Add(v.MulScalar(sysMath.Sin(t)))
+					p0 := neckPos.Add(offset)
+					p1 := pelvisPos.Add(offset)
+
+					sp0, v0 := math.ProjectToScreenMvp(p0, viewport, mvp)
+					sp1, v1 := math.ProjectToScreenMvp(p1, viewport, mvp)
+					if v0 && v1 {
+						dc.DrawLine(sp0.X+vpX, sp0.Y+vpY, sp1.X+vpX, sp1.Y+vpY, lineWidth, bodyColor)
+					}
+				}
+
+				// Hemispherical caps: semicircular arcs in the
+				// u-axis and v-axis planes. The cap height
+				// uses the larger radius to match the
+				// intersection geometry.
+				capR := sysMath.Max(bodyRX, bodyRY)
+				capDirNeck := axisNorm.Neg().MulScalar(capR)
+				capDirPelvis := axisNorm.MulScalar(capR)
+
+				o.renderWireArc(dc, neckPos, u, capDirNeck, segments/2, lineWidth, mvp, viewport, vpX, vpY, bodyColor)
+				o.renderWireArc(dc, neckPos, v, capDirNeck, segments/2, lineWidth, mvp, viewport, vpX, vpY, bodyColor)
+				o.renderWireArc(dc, pelvisPos, u, capDirPelvis, segments/2, lineWidth, mvp, viewport, vpX, vpY, bodyColor)
+				o.renderWireArc(dc, pelvisPos, v, capDirPelvis, segments/2, lineWidth, mvp, viewport, vpX, vpY, bodyColor)
+			}
+		}
+	}
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// renderWireEllipse draws a wireframe ellipse in 3D, defined
+// by a center and two axis vectors that span the ellipse plane
+// and encode the radii in their lengths.
+func (o *Overlay) renderWireEllipse(
+	dc *Canvas,
+	center math.Vector3,
+	axisU, axisV math.Vector3,
+	segments, lineWidth int,
+	mvp math.Matrix4,
+	viewport math.Size,
+	vpX, vpY float64,
+	c color.NRGBA,
+) {
+
+	for s := 0; s < segments; s++ {
+		t0 := 2 * sysMath.Pi * float64(s) / float64(segments)
+		t1 := 2 * sysMath.Pi * float64(s+1) / float64(segments)
+
+		p0 := center.Add(axisU.MulScalar(sysMath.Cos(t0))).Add(axisV.MulScalar(sysMath.Sin(t0)))
+		p1 := center.Add(axisU.MulScalar(sysMath.Cos(t1))).Add(axisV.MulScalar(sysMath.Sin(t1)))
+
+		sp0, v0 := math.ProjectToScreenMvp(p0, viewport, mvp)
+		sp1, v1 := math.ProjectToScreenMvp(p1, viewport, mvp)
+
+		if v0 && v1 {
+			dc.DrawLine(sp0.X+vpX, sp0.Y+vpY, sp1.X+vpX, sp1.Y+vpY, lineWidth, c)
+		}
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// renderWireArc draws a semicircular arc from `+equatorAxis`
+// through `poleAxis` to `-equatorAxis`. Used for the
+// hemispherical caps of capsule wireframes.
+func (o *Overlay) renderWireArc(
+	dc *Canvas,
+	center math.Vector3,
+	equatorAxis, poleAxis math.Vector3,
+	segments, lineWidth int,
+	mvp math.Matrix4,
+	viewport math.Size,
+	vpX, vpY float64,
+	c color.NRGBA,
+) {
+
+	for s := 0; s < segments; s++ {
+		t0 := sysMath.Pi * float64(s) / float64(segments)
+		t1 := sysMath.Pi * float64(s+1) / float64(segments)
+
+		p0 := center.Add(equatorAxis.MulScalar(sysMath.Cos(t0))).Add(poleAxis.MulScalar(sysMath.Sin(t0)))
+		p1 := center.Add(equatorAxis.MulScalar(sysMath.Cos(t1))).Add(poleAxis.MulScalar(sysMath.Sin(t1)))
+
+		sp0, v0 := math.ProjectToScreenMvp(p0, viewport, mvp)
+		sp1, v1 := math.ProjectToScreenMvp(p1, viewport, mvp)
+
+		if v0 && v1 {
+			dc.DrawLine(sp0.X+vpX, sp0.Y+vpY, sp1.X+vpX, sp1.Y+vpY, lineWidth, c)
+		}
+	}
 }

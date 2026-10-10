@@ -13,12 +13,24 @@ import (
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
-	// Radius for the head sphere.
-	TriggerHeadRadius = 5.5
+	// Head ellipsoid semi-axis radii.
+	TriggerHeadRadiusX = 4.5
+	TriggerHeadRadiusY = 4.0
+	TriggerHeadRadiusZ = 7.0
 
-	// Radius for the body capsule that extends from neck
-	// to pelvis.
-	TriggerBodyRadius = 8.0
+	// Body capsule cross-section semi-axes. For a
+	// roughly vertical spine these correspond to world
+	// X and Y in the horizontal plane.
+	TriggerBodyRadiusX = 5.0
+	TriggerBodyRadiusY = 4.0
+
+	// Limb capsule radii. Each value is the radius of
+	// the capsule connecting the two bones of that
+	// segment.
+	TriggerUpperArmRadius = 3.5
+	TriggerForearmRadius  = 3.0
+	TriggerThighRadius    = 4.0
+	TriggerShinRadius     = 3.5
 
 	// Minimum time between trigger fires to avoid spamming
 	// clicks faster than the game can register.
@@ -140,11 +152,13 @@ func (t *Trigger) Evaluate(action *ActionState, m *maps.Map) TriggerResult {
 		neckPos := entity.Bones.Pos[BoneNeck]
 		pelvisPos := entity.Bones.Pos[BonePelvis]
 
-		// Head sphere
+		// Head ellipsoid stretched along the Y axis
 		if !headPos.IsZero() {
-			dist, hit := ray.IntersectSphere(geometry.Sphere{
-				Center: headPos,
-				Radius: TriggerHeadRadius,
+			dist, hit := ray.IntersectEllipsoid(geometry.Ellipsoid{
+				Center:  headPos,
+				RadiusX: TriggerHeadRadiusX,
+				RadiusY: TriggerHeadRadiusY,
+				RadiusZ: TriggerHeadRadiusZ,
 			})
 			if hit && dist < best.Dist {
 				best.Active = true
@@ -154,17 +168,56 @@ func (t *Trigger) Evaluate(action *ActionState, m *maps.Map) TriggerResult {
 			}
 		}
 
-		// Body capsule from neck to pelvis
+		// Body capsule from neck to pelvis, rotated to
+		// align with the enemy's facing direction
 		if !neckPos.IsZero() && !pelvisPos.IsZero() {
-			dist, hit := ray.IntersectCapsule(geometry.Capsule{
-				Start:  neckPos,
-				End:    pelvisPos,
-				Radius: TriggerBodyRadius,
+			yawRad := entity.Angles.Y * sysMath.Pi / 180.0
+			dist, hit := ray.IntersectEllipticalCapsule(geometry.EllipticalCapsule{
+				Start:    neckPos,
+				End:      pelvisPos,
+				RadiusA:  TriggerBodyRadiusY,
+				RadiusB:  TriggerBodyRadiusX,
+				Rotation: yawRad,
 			})
 			if hit && dist < best.Dist {
 				best.Active = true
 				best.Target = entity
 				best.Bone = BoneNeck
+				best.Dist = dist
+			}
+		}
+
+		// Limb capsules connecting adjacent bones
+		limbSegs := [...]struct {
+			startBone int
+			endBone   int
+			radius    float64
+		}{
+			{BoneLeftShoulder, BoneLeftElbow, TriggerUpperArmRadius},
+			{BoneLeftElbow, BoneLeftHand, TriggerForearmRadius},
+			{BoneRightShoulder, BoneRightElbow, TriggerUpperArmRadius},
+			{BoneRightElbow, BoneRightHand, TriggerForearmRadius},
+			{BoneLeftHip, BoneLeftKnee, TriggerThighRadius},
+			{BoneLeftKnee, BoneLeftFoot, TriggerShinRadius},
+			{BoneRightHip, BoneRightKnee, TriggerThighRadius},
+			{BoneRightKnee, BoneRightFoot, TriggerShinRadius},
+		}
+
+		for _, seg := range limbSegs {
+			startPos := entity.Bones.Pos[seg.startBone]
+			endPos := entity.Bones.Pos[seg.endBone]
+			if startPos.IsZero() || endPos.IsZero() {
+				continue
+			}
+			dist, hit := ray.IntersectCapsule(geometry.Capsule{
+				Start:  startPos,
+				End:    endPos,
+				Radius: seg.radius,
+			})
+			if hit && dist < best.Dist {
+				best.Active = true
+				best.Target = entity
+				best.Bone = seg.startBone
 				best.Dist = dist
 			}
 		}
