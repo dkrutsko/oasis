@@ -20,6 +20,10 @@ const (
 	// Longest frame time applied to free mode movement so
 	// a stalled frame does not move the camera in one jump.
 	freeMaxFrameTime = 0.1
+
+	// Range of the distance between the eye and the orbit center
+	cameraMinDistance = 1.0
+	cameraMaxDistance = 200000.0
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -43,6 +47,7 @@ type OrbitCamera struct {
 	viewport math.Size
 	near     float64
 	far      float64
+	ortho    bool
 
 	prevX    float32
 	prevY    float32
@@ -94,10 +99,24 @@ func (c *OrbitCamera) GetViewMatrix() math.Matrix4 {
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// GetProjectionMatrix returns the perspective projection, or the orthographic
+// one when `ortho` is set. The orthographic view shows the same height as the
+// perspective view at the orbit center, so toggling keeps the zoom level.
 func (c *OrbitCamera) GetProjectionMatrix() math.Matrix4 {
 
 	if c.viewport.W == 0 || c.viewport.H == 0 {
 		return math.Matrix4Identity
+	}
+
+	if c.ortho {
+		// `Matrix4CreateOrthographic` takes a size in whole units, so the
+		// projection is built in pixels and scaled down to world units
+		height := 2 * c.distance * sysMath.Tan(c.fov*0.5)
+		scale := float64(c.viewport.H) / height
+
+		return math.Matrix4CreateScale(scale, scale, 1).Mul(
+			math.Matrix4CreateOrthographic(c.viewport, c.near, c.far),
+		)
 	}
 
 	return math.Matrix4CreateProjection(c.fov, c.viewport, c.near, c.far)
@@ -212,12 +231,7 @@ func (c *OrbitCamera) UpdateAuto(
 	// Scroll to zoom
 	if c.pendingScroll != 0 {
 		c.distance *= sysMath.Exp(c.pendingScroll * 0.002)
-		if c.distance < 1 {
-			c.distance = 1
-		}
-		if c.distance > 200000 {
-			c.distance = 200000
-		}
+		c.distance = math.Clamp(c.distance, cameraMinDistance, cameraMaxDistance)
 		c.autoDistOvr = c.distance
 		c.pendingScroll = 0
 	}
@@ -332,7 +346,13 @@ func (c *OrbitCamera) UpdateFree(
 		move.Z -= speed
 	}
 
-	c.center = c.center.Add(move)
+	// Movement along the view direction changes the distance to the center
+	// rather than carrying the center along, as scrolling does in auto mode,
+	// so flying in zooms the orthographic view. The eye still moves by
+	// `move`, and once the distance is clamped the center moves with it.
+	eye := c.GetEyePosition().Add(move)
+	c.distance = math.Clamp(c.distance-move.Dot(fwd), cameraMinDistance, cameraMaxDistance)
+	c.center = eye.Add(fwd.MulScalar(c.distance))
 
 	//----------------------------------------------------------------------------//
 }

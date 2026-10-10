@@ -11,6 +11,7 @@ import (
 	"github.com/dkrutsko/oasis/game"
 	"github.com/dkrutsko/oasis/input"
 	"github.com/dkrutsko/oasis/logger"
+	"github.com/dkrutsko/oasis/math"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -132,9 +133,16 @@ func (v *Viewer3d) Run(ctx context.Context) error {
 				v.camera.HandleScroll(float64(event.MouseWheelEvent().Y) * scrollScale)
 
 			case sdl.EVENT_MOUSE_BUTTON_DOWN:
-				// Detect left-click for double-click auto mode toggle
-				if event.MouseButtonEvent().Button == uint8(sdl.BUTTON_LEFT) {
-					v.camera.HandleLeftClick()
+				// Clicking the projection label switches the projection, any
+				// other left-click counts toward a double-click for auto mode
+				button := event.MouseButtonEvent()
+				if button.Button == uint8(sdl.BUTTON_LEFT) {
+					point := math.Point{X: int(button.X), Y: int(button.Y)}
+					if v.renderer.GetLabelBounds().Contains(point, false) {
+						v.camera.ortho = !v.camera.ortho
+					} else {
+						v.camera.HandleLeftClick()
+					}
 				}
 			}
 		}
@@ -272,8 +280,14 @@ func (v *Viewer3d) drawFrame(window *sdl.Window) {
 		v.renderer.UpdateEntities(action, v.camera.GetEyePosition(), currentMap)
 	}
 
+	// The HUD is laid out in window coordinates rather than pixels, matching
+	// mouse events, so a click can be tested against the projection label
+	windowWidth, windowHeight, err := window.Size()
+	if err == nil {
+		v.renderer.UpdateHud(v.camera.auto, v.camera.ortho, int(windowWidth), int(windowHeight))
+	}
+
 	// Draw
-	v.renderer.UpdateHud(v.camera.auto, v.camera.viewport.W, v.camera.viewport.H)
 	mvp := v.camera.GetViewProjection()
 	if err := v.renderer.Draw(mvp); err != nil {
 		logger.Warn("3d viewer draw error",

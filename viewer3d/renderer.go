@@ -22,8 +22,10 @@ import (
 // the aim ray gets the rest.
 const entityBufSize = 65536
 
-// Maximum HUD vertex buffer size in bytes.
-const textBufSize = 8192
+// Maximum HUD vertex buffer size in bytes. Every pixel of the label is drawn
+// as two quads of 168 bytes, its outline and its fill, which takes about 17 KB
+// for "ortho".
+const textBufSize = 32768
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -46,6 +48,7 @@ type Renderer struct {
 	textBuf      *sdl.GPUBuffer
 	textData     []byte
 	textVertices uint32
+	labelBounds  math.Bounds
 
 	// Stages the entity and HUD vertices, which are uploaded
 	// at the start of every frame
@@ -457,47 +460,81 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// UpdateHud builds the HUD indicator. Shows a green
-// circle in the top-right when auto mode is active.
-// Viewport width/height are needed to correct for aspect
-// ratio so the circle isn't stretched into an oval.
-func (r *Renderer) UpdateHud(autoMode bool, vpW, vpH int) {
+// UpdateHud builds the HUD for a window of `width` by `height` in window
+// coordinates, the space of mouse events. It shows the projection label in the
+// top-left, which `GetLabelBounds` locates for clicks, and a green circle in
+// the top-right when auto mode is active.
+func (r *Renderer) UpdateHud(autoMode, ortho bool, width, height int) {
 
-	if !autoMode {
-		r.textData = r.textData[:0]
+	//----------------------------------------------------------------------------//
+
+	buf := r.textData[:0]
+	r.labelBounds = math.Bounds{}
+
+	// A window without an area has nothing to lay out
+	if width <= 0 || height <= 0 {
+		r.textData = buf
 		r.textVertices = 0
 		return
 	}
 
-	// Filled circle in NDC. Top-right corner with margin.
-	// Scale X radius by height/width to counteract the
-	// non-square NDC coordinate space.
-	const (
-		cx       = 0.92
-		cy       = 0.90
-		radius   = 0.015
-		segments = 24
-	)
+	//----------------------------------------------------------------------------//
 
-	aspect := 1.0
-	if vpW > 0 && vpH > 0 {
-		aspect = float64(vpH) / float64(vpW)
+	// Projection label in green with a black outline. The outline is drawn
+	// first as grown black pixels, so it never covers the green of a neighbor.
+	label := "pers"
+	if ortho {
+		label = "ortho"
 	}
 
-	var cr, cg, cb, ca float32 = 0.2, 0.9, 0.2, 1.0
-	buf := r.textData[:0]
+	buf = appendText(buf, label, labelLeft, labelTop, labelPixel, width, height, 0, 0, 0, 1)
+	buf = appendText(buf, label, labelLeft, labelTop, 0, width, height, 0.2, 0.9, 0.2, 1)
 
-	for i := 0; i < segments; i++ {
-		a1 := float64(i) * 2 * sysMath.Pi / float64(segments)
-		a2 := float64(i+1) * 2 * sysMath.Pi / float64(segments)
+	r.labelBounds = math.Bounds{
+		X: labelLeft - labelPixel,
+		Y: labelTop - labelPixel,
+		W: (len(label)*(glyphWidth+1) + 1) * labelPixel,
+		H: (glyphHeight + 2) * labelPixel,
+	}
 
-		buf = appendVertex(buf, cx, cy, 0, cr, cg, cb, ca)
-		buf = appendVertex(buf, cx+radius*aspect*sysMath.Cos(a1), cy+radius*sysMath.Sin(a1), 0, cr, cg, cb, ca)
-		buf = appendVertex(buf, cx+radius*aspect*sysMath.Cos(a2), cy+radius*sysMath.Sin(a2), 0, cr, cg, cb, ca)
+	//----------------------------------------------------------------------------//
+
+	// Filled circle in NDC in the top-right corner with a margin. The X radius
+	// is scaled by height over width to counteract the non-square NDC space.
+	if autoMode {
+		const (
+			cx       = 0.92
+			cy       = 0.90
+			radius   = 0.015
+			segments = 24
+		)
+
+		aspect := float64(height) / float64(width)
+		var cr, cg, cb, ca float32 = 0.2, 0.9, 0.2, 1.0
+
+		for i := 0; i < segments; i++ {
+
+			a1 := float64(i) * 2 * sysMath.Pi / float64(segments)
+			a2 := float64(i+1) * 2 * sysMath.Pi / float64(segments)
+
+			buf = appendVertex(buf, cx, cy, 0, cr, cg, cb, ca)
+			buf = appendVertex(buf, cx+radius*aspect*sysMath.Cos(a1), cy+radius*sysMath.Sin(a1), 0, cr, cg, cb, ca)
+			buf = appendVertex(buf, cx+radius*aspect*sysMath.Cos(a2), cy+radius*sysMath.Sin(a2), 0, cr, cg, cb, ca)
+		}
 	}
 
 	r.textData = buf
 	r.textVertices = uint32(len(buf) / 28)
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// GetLabelBounds returns the area of the projection label drawn by the last
+// `UpdateHud`, outline included, in window coordinates.
+func (r *Renderer) GetLabelBounds() math.Bounds {
+	return r.labelBounds
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -799,6 +836,168 @@ func appendLineQuad(buf []byte, camEye math.Vector3,
 	buf = appendVertex(buf, cx, cy, cz, r, g, b, a)
 	buf = appendVertex(buf, bx, by, bz, r, g, b, a)
 	buf = appendVertex(buf, ex, ey, ez, r, g, b, a)
+
+	return buf
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Top-left corner of the HUD label and the size of one of its pixels, in
+// window coordinates
+const (
+	labelLeft  = 16
+	labelTop   = 16
+	labelPixel = 2
+)
+
+// Size of a glyph of the HUD label font in pixels. Each glyph has 2 rows of
+// ascender, 5 rows of x-height and 2 rows of descender.
+const (
+	glyphWidth  = 4
+	glyphHeight = 9
+)
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Glyphs of the HUD label font, only for the letters the label uses
+var labelGlyphs = map[byte][glyphHeight]string{
+	'e': {
+		"....",
+		"....",
+		".##.",
+		"#..#",
+		"####",
+		"#...",
+		".###",
+		"....",
+		"....",
+	},
+	'h': {
+		"#...",
+		"#...",
+		"###.",
+		"#..#",
+		"#..#",
+		"#..#",
+		"#..#",
+		"....",
+		"....",
+	},
+	'o': {
+		"....",
+		"....",
+		".##.",
+		"#..#",
+		"#..#",
+		"#..#",
+		".##.",
+		"....",
+		"....",
+	},
+	'p': {
+		"....",
+		"....",
+		"###.",
+		"#..#",
+		"#..#",
+		"#..#",
+		"###.",
+		"#...",
+		"#...",
+	},
+	'r': {
+		"....",
+		"....",
+		"#.##",
+		"##..",
+		"#...",
+		"#...",
+		"#...",
+		"....",
+		"....",
+	},
+	's': {
+		"....",
+		"....",
+		".###",
+		"#...",
+		".##.",
+		"...#",
+		"###.",
+		"....",
+		"....",
+	},
+	't': {
+		"....",
+		".#..",
+		"###.",
+		".#..",
+		".#..",
+		".#..",
+		"..##",
+		"....",
+		"....",
+	},
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// appendText draws text in the HUD label font with its top-left corner at
+// `left`, `top` in a `width` by `height` window. Every pixel grows by `grow`
+// on each side, so text drawn grown and then again on top gets an outline.
+func appendText(
+	buf []byte,
+	text string,
+	left, top, grow int,
+	width, height int,
+	r, g, b, a float32,
+) []byte {
+
+	for i := 0; i < len(text); i++ {
+
+		glyph := labelGlyphs[text[i]]
+		glyphLeft := left + i*(glyphWidth+1)*labelPixel
+
+		for row, line := range glyph {
+
+			for col, pixel := range line {
+
+				if pixel != '#' {
+					continue
+				}
+
+				bounds := math.Bounds{
+					X: glyphLeft + col*labelPixel - grow,
+					Y: top + row*labelPixel - grow,
+					W: labelPixel + 2*grow,
+					H: labelPixel + 2*grow,
+				}
+				buf = appendRect(buf, bounds, width, height, r, g, b, a)
+			}
+		}
+	}
+
+	return buf
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// appendRect draws a rectangle given in window coordinates of a `width` by
+// `height` window. Window coordinates grow right and down from the top-left
+// corner, while NDC grows right and up from the center.
+func appendRect(buf []byte, bounds math.Bounds, width, height int, r, g, b, a float32) []byte {
+
+	left := float64(bounds.GetLeft())/float64(width)*2 - 1
+	right := float64(bounds.GetRight())/float64(width)*2 - 1
+	top := 1 - float64(bounds.GetTop())/float64(height)*2
+	bottom := 1 - float64(bounds.GetBottom())/float64(height)*2
+
+	buf = appendVertex(buf, left, top, 0, r, g, b, a)
+	buf = appendVertex(buf, left, bottom, 0, r, g, b, a)
+	buf = appendVertex(buf, right, top, 0, r, g, b, a)
+	buf = appendVertex(buf, right, top, 0, r, g, b, a)
+	buf = appendVertex(buf, left, bottom, 0, r, g, b, a)
+	buf = appendVertex(buf, right, bottom, 0, r, g, b, a)
 
 	return buf
 }
