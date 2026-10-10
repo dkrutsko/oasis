@@ -251,6 +251,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 	if cache.pid != pid || cache.client != client {
 		*cache = entityCache{pid: pid, client: client}
 		g.hostageCount = 0
+		g.c4Addr = 0
 	}
 
 	// Internal CModelState offset to the bone array pointer.
@@ -444,6 +445,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		if localPawnAddr == 0 {
 			*cache = entityCache{pid: pid, client: client}
 			g.hostageCount = 0
+			g.c4Addr = 0
 			result.Result = ActionResultSuccess
 			return result
 		}
@@ -453,6 +455,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		if entListBase != cache.entListBase || listEntry != cache.listEntry {
 			*cache = entityCache{pid: pid, client: client}
 			g.hostageCount = 0
+			g.c4Addr = 0
 			result.Result = ActionResultNoEntList
 			return result
 		}
@@ -651,7 +654,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 	}
 
 	result.Bomb, result.Hostages = g.readObjectives(
-		memory, client, cache.listEntry, pawnHandles,
+		memory, client, cache.entListBase, pawnHandles,
 	)
 
 	//----------------------------------------------------------------------------//
@@ -802,7 +805,7 @@ func (g *Game) updateActionSequential(
 
 	// Read objective state
 	result.Bomb, result.Hostages = g.readObjectives(
-		memory, client, listEntry, pawnHandles,
+		memory, client, entListBase, pawnHandles,
 	)
 
 	//----------------------------------------------------------------------------//

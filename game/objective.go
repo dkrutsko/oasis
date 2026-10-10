@@ -36,8 +36,11 @@ type HostageInfo struct {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-const hostageDesignerName = "hostage_entity"
-const hostageScanInterval = 5 * time.Second
+const (
+	c4DesignerName      = "weapon_c4"
+	hostageDesignerName = "hostage_entity"
+	entityScanInterval  = 5 * time.Second
+)
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -47,7 +50,7 @@ const hostageScanInterval = 5 * time.Second
 func (g *Game) readObjectives(
 	memory *leech.Memory,
 	client uintptr,
-	listEntry uintptr,
+	entListBase uintptr,
 	pawnHandles [64]int32,
 ) (*BombInfo, []HostageInfo) {
 
@@ -81,18 +84,30 @@ func (g *Game) readObjectives(
 		return nil, nil
 	}
 
+	hasBombTarget, _ := memory.ReadBool(gameRules + offMapHasBombTarget)
+	hasRescueZone, _ := memory.ReadBool(gameRules + offMapHasRescueZone)
+
+	//----------------------------------------------------------------------------//
+
+	// Periodic entity list scan for non-player entities
+	// (C4 weapon, hostages). The scan is throttled so the
+	// per-frame cost is just the cached address reads.
+	now := time.Now()
+	if now.Sub(g.lastEntityScan) >= entityScanInterval {
+		g.lastEntityScan = now
+		g.scanEntities(memory, entListBase, hasBombTarget, hasRescueZone)
+	}
+
 	//----------------------------------------------------------------------------//
 
 	var bomb *BombInfo
-	hasBombTarget, err := memory.ReadBool(gameRules + offMapHasBombTarget)
-	if err == nil && hasBombTarget {
-		bomb = g.readBombInfo(memory, client, pawnHandles)
+	if hasBombTarget {
+		bomb = g.readBombInfo(memory, client, gameRules, pawnHandles)
 	}
 
 	var hostages []HostageInfo
-	hasRescueZone, err := memory.ReadBool(gameRules + offMapHasRescueZone)
-	if err == nil && hasRescueZone {
-		hostages = g.readHostageInfo(memory, listEntry, pawnHandles)
+	if hasRescueZone {
+		hostages = g.readHostageInfo(memory, pawnHandles)
 	}
 
 	return bomb, hostages
@@ -106,6 +121,7 @@ func (g *Game) readObjectives(
 func (g *Game) readBombInfo(
 	memory *leech.Memory,
 	client uintptr,
+	gameRules uintptr,
 	pawnHandles [64]int32,
 ) *BombInfo {
 
@@ -185,6 +201,14 @@ func (g *Game) readBombInfo(
 		return nil
 	}
 
+	offBombDropped, ok := g.GetOffsetsInt(
+		"client_dll", "client.dll", "classes",
+		"C_CSGameRules", "fields", "m_bBombDropped",
+	)
+	if !ok {
+		return nil
+	}
+
 	//----------------------------------------------------------------------------//
 
 	info := &BombInfo{Carrier: -1}
@@ -209,15 +233,34 @@ func (g *Game) readBombInfo(
 
 	//----------------------------------------------------------------------------//
 
-	// Read weapon C4 for carrier or dropped state
-	weaponAddr, err := memory.ReadPtr(client + offWeaponC4)
-	if err != nil || weaponAddr == 0 {
+	// Find the C4 weapon entity. Prefer the address from the
+	// entity list scan. Fall back to dwWeaponC4 which only
+	// works when the local player holds the bomb.
+	weaponAddr := g.c4Addr
+	if weaponAddr == 0 {
+		weaponAddr, _ = memory.ReadPtr(client + offWeaponC4)
+	}
+
+	if weaponAddr == 0 {
+		bombDropped, _ := memory.ReadBool(gameRules + offBombDropped)
+		info.Dropped = bombDropped
 		return info
 	}
+
+	//----------------------------------------------------------------------------//
 
 	ownerHandle, err := memory.ReadInt32(weaponAddr + offOwnerEntity)
 	if err == nil && ownerHandle != 0 && ownerHandle != -1 {
 		info.Carrier = resolveEntitySlot(ownerHandle, pawnHandles)
+
+		// The owner handle may reference the controller
+		// (entity indices 1-64) instead of the pawn
+		if info.Carrier == -1 {
+			ownerIdx := int(ownerHandle & 0x7FFF)
+			if ownerIdx >= 1 && ownerIdx <= 64 {
+				info.Carrier = ownerIdx - 1
+			}
+		}
 	} else {
 		info.Dropped = true
 	}
@@ -235,22 +278,15 @@ func (g *Game) readBombInfo(
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// readHostageInfo reads the state of cached hostage entities
-// and periodically rescans the entity list to find them.
+// readHostageInfo reads the state of cached hostage entities.
+// The entity scan that populates the cache runs from
+// `readObjectives` before this is called.
 func (g *Game) readHostageInfo(
 	memory *leech.Memory,
-	listEntry uintptr,
 	pawnHandles [64]int32,
 ) []HostageInfo {
 
 	//----------------------------------------------------------------------------//
-
-	// Rescan the entity list for hostage entities periodically
-	now := time.Now()
-	if now.Sub(g.lastHostageScan) >= hostageScanInterval {
-		g.lastHostageScan = now
-		g.scanHostages(memory, listEntry)
-	}
 
 	if g.hostageCount == 0 {
 		return nil
@@ -323,10 +359,14 @@ func (g *Game) readHostageInfo(
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// scanHostages walks the entity list looking for hostage
-// entities and caches their addresses. CS2 hostage maps
-// have at most two hostages.
-func (g *Game) scanHostages(memory *leech.Memory, listEntry uintptr) {
+// scanEntities walks the entity list looking for non-player
+// entities (C4 weapon, hostages) and caches their addresses.
+func (g *Game) scanEntities(
+	memory *leech.Memory,
+	entListBase uintptr,
+	scanC4 bool,
+	scanHostages bool,
+) {
 
 	//----------------------------------------------------------------------------//
 
@@ -348,14 +388,31 @@ func (g *Game) scanHostages(memory *leech.Memory, listEntry uintptr) {
 
 	//----------------------------------------------------------------------------//
 
+	g.c4Addr = 0
 	g.hostageCount = 0
 
-	// Scan chunk 0 of the entity list past the player slots.
-	// Hostages are among the first non-player entities and
-	// are always within the first chunk (indices 0-511).
-	for idx := 65; idx < 512; idx++ {
+	foundC4 := !scanC4
+	foundHostages := !scanHostages
 
-		entityAddr, err := memory.ReadPtr(listEntry + uintptr(idx)*0x70)
+	// Scan entity list chunks past the player controller
+	// slots (indices 1-64). Non-player entities such as the
+	// C4 weapon and hostages live at higher indices, possibly
+	// across multiple chunks of 512 entries each.
+	for idx := 65; idx < 2048; idx++ {
+
+		if foundC4 && foundHostages {
+			break
+		}
+
+		chunkIdx := uintptr(idx) >> 9
+		entryIdx := uintptr(idx) & 0x1FF
+
+		chunk, err := memory.ReadPtr(entListBase + 0x10 + 8*chunkIdx)
+		if err != nil || chunk == 0 {
+			continue
+		}
+
+		entityAddr, err := memory.ReadPtr(chunk + 0x70*entryIdx)
 		if err != nil || entityAddr == 0 {
 			continue
 		}
@@ -375,13 +432,22 @@ func (g *Game) scanHostages(memory *leech.Memory, listEntry uintptr) {
 			continue
 		}
 
-		if name == hostageDesignerName {
+		if scanC4 && name == c4DesignerName {
+			g.c4Addr = entityAddr
+			foundC4 = true
+		}
+
+		if scanHostages && name == hostageDesignerName {
 			g.hostageAddrs[g.hostageCount] = entityAddr
 			g.hostageCount++
 			if g.hostageCount >= len(g.hostageAddrs) {
-				break
+				foundHostages = true
 			}
 		}
+	}
+
+	if g.c4Addr != 0 {
+		logger.Dbg("found c4 weapon entity")
 	}
 
 	if g.hostageCount > 0 {
