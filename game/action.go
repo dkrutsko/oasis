@@ -250,7 +250,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 	cache := &g.entityCache
 	if cache.pid != pid || cache.client != client {
 		*cache = entityCache{pid: pid, client: client}
-		g.hostageCount = 0
+		g.playerResAddr = 0
 		g.c4Addr = 0
 	}
 
@@ -444,7 +444,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		// Left the game, the next frame starts over
 		if localPawnAddr == 0 {
 			*cache = entityCache{pid: pid, client: client}
-			g.hostageCount = 0
+			g.playerResAddr = 0
 			g.c4Addr = 0
 			result.Result = ActionResultSuccess
 			return result
@@ -454,7 +454,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		// so the next frame resolves it again
 		if entListBase != cache.entListBase || listEntry != cache.listEntry {
 			*cache = entityCache{pid: pid, client: client}
-			g.hostageCount = 0
+			g.playerResAddr = 0
 			g.c4Addr = 0
 			result.Result = ActionResultNoEntList
 			return result

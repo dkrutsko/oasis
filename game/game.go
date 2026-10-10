@@ -73,10 +73,11 @@ type Game struct {
 
 	// Cached non-player entity addresses found by periodic
 	// entity list scans. Only the action updater uses them.
-	lastEntityScan time.Time
-	hostageAddrs   [2]uintptr
-	hostageCount   int
-	c4Addr         uintptr
+	lastEntityScan  time.Time
+	playerResAddr   uintptr
+	hostageFallback [2]HostageInfo
+	hostageFbCount  int
+	c4Addr          uintptr
 
 	// Signaled when action or camera state is updated.
 	// The overlay listens on this to render only when
@@ -230,7 +231,8 @@ func (g *Game) checkMapChange(memory *leech.Memory, client uintptr) {
 	g.mapLock.Unlock()
 
 	// Clear cached non-player entities for the new map
-	g.hostageCount = 0
+	g.playerResAddr = 0
+	g.hostageFbCount = 0
 	g.c4Addr = 0
 
 	// Only load collision data when a maps directory is configured

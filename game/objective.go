@@ -37,9 +37,10 @@ type HostageInfo struct {
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
-	c4DesignerName      = "weapon_c4"
-	hostageDesignerName = "hostage_entity"
-	entityScanInterval  = 5 * time.Second
+	c4ClassName            = "C_C4"
+	playerResClassName     = "C_CSPlayerResource"
+	playerResDesignerName  = "cs_player_manager"
+	entityScanInterval     = time.Second
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -90,12 +91,19 @@ func (g *Game) readObjectives(
 	//----------------------------------------------------------------------------//
 
 	// Periodic entity list scan for non-player entities
-	// (C4 weapon, hostages). The scan is throttled so the
-	// per-frame cost is just the cached address reads.
+	// (C4 weapon, player resource). The scan is throttled so
+	// the per-frame cost is just the cached address reads.
 	now := time.Now()
 	if now.Sub(g.lastEntityScan) >= entityScanInterval {
 		g.lastEntityScan = now
-		g.scanEntities(memory, entListBase, hasBombTarget, hasRescueZone)
+
+		offHighest, _ := g.GetOffsetsInt(
+			"offsets", "client.dll",
+			"dwGameEntitySystem_highestEntityIndex",
+		)
+		highest, _ := memory.ReadInt32(entListBase + offHighest)
+
+		g.scanEntities(memory, entListBase, hasBombTarget, hasRescueZone, int(highest))
 	}
 
 	//----------------------------------------------------------------------------//
@@ -107,7 +115,7 @@ func (g *Game) readObjectives(
 
 	var hostages []HostageInfo
 	if hasRescueZone {
-		hostages = g.readHostageInfo(memory, pawnHandles)
+		hostages = g.readHostageInfo(memory, entListBase, pawnHandles)
 	}
 
 	return bomb, hostages
@@ -278,21 +286,46 @@ func (g *Game) readBombInfo(
 
 ////////////////////////////////////////////////////////////////////////////////
 
-// readHostageInfo reads the state of cached hostage entities.
-// The entity scan that populates the cache runs from
-// `readObjectives` before this is called.
+// readHostageInfo reads hostage state using entity handles
+// from the `C_CSPlayerResource` singleton. The player resource
+// is always networked and provides `m_iHostageEntityIDs` which
+// can be resolved to entity addresses even when a brute force
+// scan of class names misses them.
 func (g *Game) readHostageInfo(
 	memory *leech.Memory,
+	entListBase uintptr,
 	pawnHandles [64]int32,
 ) []HostageInfo {
 
 	//----------------------------------------------------------------------------//
 
-	if g.hostageCount == 0 {
-		return nil
+	if g.playerResAddr == 0 {
+		if g.hostageFbCount == 0 {
+			return nil
+		}
+
+		result := make([]HostageInfo, g.hostageFbCount)
+		copy(result, g.hostageFallback[:g.hostageFbCount])
+		return result
 	}
 
 	//----------------------------------------------------------------------------//
+
+	offHostageAlive, ok := g.GetOffsetsInt(
+		"client_dll", "client.dll", "classes",
+		"C_CSPlayerResource", "fields", "m_bHostageAlive",
+	)
+	if !ok {
+		return nil
+	}
+
+	offHostageEntityIds, ok := g.GetOffsetsInt(
+		"client_dll", "client.dll", "classes",
+		"C_CSPlayerResource", "fields", "m_iHostageEntityIDs",
+	)
+	if !ok {
+		return nil
+	}
 
 	offGameSceneNode, ok := g.GetOffsetsInt(
 		"client_dll", "client.dll", "classes",
@@ -328,44 +361,94 @@ func (g *Game) readHostageInfo(
 
 	//----------------------------------------------------------------------------//
 
-	hostages := make([]HostageInfo, 0, g.hostageCount)
+	// Walk the player resource hostage arrays. CS2 supports up
+	// to 12 hostages but typical maps use 2.
+	for i := uintptr(0); i < 2; i++ {
+		alive, _ := memory.ReadBool(g.playerResAddr + offHostageAlive + i)
+		if !alive {
+			continue
+		}
 
-	for i := 0; i < g.hostageCount; i++ {
-		addr := g.hostageAddrs[i]
+		entityId, _ := memory.ReadInt32(g.playerResAddr + offHostageEntityIds + i*4)
+		if entityId <= 0 {
+			continue
+		}
+
+		// Resolve entity handle to address
+		entityAddr := resolveEntityAddr(memory, entListBase, entityId)
+		if entityAddr == 0 {
+			continue
+		}
+
 		info := HostageInfo{Grabber: -1}
 
-		// Read position through the scene node
-		sceneNode, err := memory.ReadPtr(addr + offGameSceneNode)
+		sceneNode, err := memory.ReadPtr(entityAddr + offGameSceneNode)
 		if err != nil || sceneNode == 0 {
 			continue
 		}
 
 		info.Origin, _ = ReadVector3(memory, sceneNode+offAbsOrigin)
-		info.Rescued, _ = memory.ReadBool(addr + offIsRescued)
+		if info.Origin.IsZero() {
+			continue
+		}
 
-		// Check if a player is carrying this hostage
-		grabberHandle, err := memory.ReadInt32(addr + offHostageGrabber)
+		info.Rescued, _ = memory.ReadBool(entityAddr + offIsRescued)
+
+		grabberHandle, err := memory.ReadInt32(entityAddr + offHostageGrabber)
 		if err == nil && grabberHandle != 0 && grabberHandle != -1 {
 			info.Grabber = resolveEntitySlot(grabberHandle, pawnHandles)
 		}
 
-		hostages = append(hostages, info)
+		g.updateHostageFallback(info)
 	}
 
-	return hostages
+	//----------------------------------------------------------------------------//
+
+	if g.hostageFbCount == 0 {
+		return nil
+	}
+
+	result := make([]HostageInfo, g.hostageFbCount)
+	copy(result, g.hostageFallback[:g.hostageFbCount])
+	return result
 
 	//----------------------------------------------------------------------------//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
+// updateHostageFallback updates the fallback cache with live
+// hostage data. Matches by proximity (within 200 units) to
+// avoid duplicates when entity addresses change across rounds.
+func (g *Game) updateHostageFallback(info HostageInfo) {
+
+	for i := 0; i < g.hostageFbCount; i++ {
+		dx := g.hostageFallback[i].Origin.X - info.Origin.X
+		dy := g.hostageFallback[i].Origin.Y - info.Origin.Y
+		dz := g.hostageFallback[i].Origin.Z - info.Origin.Z
+		if dx*dx+dy*dy+dz*dz < 200*200 {
+			g.hostageFallback[i] = info
+			return
+		}
+	}
+
+	if g.hostageFbCount < len(g.hostageFallback) {
+		g.hostageFallback[g.hostageFbCount] = info
+		g.hostageFbCount++
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
 // scanEntities walks the entity list looking for non-player
-// entities (C4 weapon, hostages) and caches their addresses.
+// entities (C4 weapon, player resource) and caches their
+// addresses.
 func (g *Game) scanEntities(
 	memory *leech.Memory,
 	entListBase uintptr,
 	scanC4 bool,
 	scanHostages bool,
+	highestIdx int,
 ) {
 
 	//----------------------------------------------------------------------------//
@@ -389,18 +472,21 @@ func (g *Game) scanEntities(
 	//----------------------------------------------------------------------------//
 
 	g.c4Addr = 0
-	g.hostageCount = 0
 
 	foundC4 := !scanC4
-	foundHostages := !scanHostages
+	foundPlayerRes := !scanHostages || g.playerResAddr != 0
+
+	scanLimit := highestIdx + 1
+	if scanLimit < 512 {
+		scanLimit = 512
+	}
 
 	// Scan entity list chunks past the player controller
-	// slots (indices 1-64). Non-player entities such as the
-	// C4 weapon and hostages live at higher indices, possibly
-	// across multiple chunks of 512 entries each.
-	for idx := 65; idx < 2048; idx++ {
+	// slots (indices 1-64). Non-player entities live at higher
+	// indices, possibly across multiple chunks of 512 each.
+	for idx := 65; idx < scanLimit; idx++ {
 
-		if foundC4 && foundHostages {
+		if foundC4 && foundPlayerRes {
 			break
 		}
 
@@ -422,26 +508,26 @@ func (g *Game) scanEntities(
 			continue
 		}
 
-		namePtr, err := memory.ReadPtr(identity + offDesignerName)
-		if err != nil || namePtr == 0 {
-			continue
-		}
+		className := g.readClassName(memory, identity)
 
-		name, err := memory.ReadString(namePtr, 32)
-		if err != nil {
-			continue
-		}
-
-		if scanC4 && name == c4DesignerName {
+		if scanC4 && className == c4ClassName {
 			g.c4Addr = entityAddr
 			foundC4 = true
 		}
 
-		if scanHostages && name == hostageDesignerName {
-			g.hostageAddrs[g.hostageCount] = entityAddr
-			g.hostageCount++
-			if g.hostageCount >= len(g.hostageAddrs) {
-				foundHostages = true
+		// The player resource has class name `C_CSPlayerResource`
+		// and designer name `cs_player_manager`. Try both since
+		// the class info chain can fail for some entities.
+		if !foundPlayerRes {
+			if className == playerResClassName {
+				g.playerResAddr = entityAddr
+				foundPlayerRes = true
+			} else if className == "" {
+				name := g.readDesignerName(memory, identity, offDesignerName)
+				if name == playerResDesignerName {
+					g.playerResAddr = entityAddr
+					foundPlayerRes = true
+				}
 			}
 		}
 	}
@@ -450,13 +536,97 @@ func (g *Game) scanEntities(
 		logger.Dbg("found c4 weapon entity")
 	}
 
-	if g.hostageCount > 0 {
-		logger.Dbg("found hostage entities",
-			logger.Int("count", g.hostageCount),
-		)
+	if g.playerResAddr != 0 {
+		logger.Dbg("found player resource entity")
 	}
 
 	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readClassName reads the schema class name for an entity
+// identity via the class info chain. Returns an empty string
+// if any pointer in the chain is invalid.
+func (g *Game) readClassName(
+	memory *leech.Memory,
+	identity uintptr,
+) string {
+
+	classInfo, err := memory.ReadPtr(identity + 0x08)
+	if err != nil || classInfo == 0 {
+		return ""
+	}
+
+	binding, err := memory.ReadPtr(classInfo + 0x58)
+	if err != nil || binding == 0 {
+		return ""
+	}
+
+	namePtr, err := memory.ReadPtr(binding + 0x08)
+	if err != nil || namePtr == 0 {
+		return ""
+	}
+
+	name, err := memory.ReadString(namePtr, 48)
+	if err != nil {
+		return ""
+	}
+
+	return name
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// readDesignerName reads the designer name string from an
+// entity identity. Returns an empty string if the pointer is
+// null (common for entities like hostages).
+func (g *Game) readDesignerName(
+	memory *leech.Memory,
+	identity uintptr,
+	offDesignerName uintptr,
+) string {
+
+	namePtr, err := memory.ReadPtr(identity + offDesignerName)
+	if err != nil || namePtr == 0 {
+		return ""
+	}
+
+	name, err := memory.ReadString(namePtr, 48)
+	if err != nil {
+		return ""
+	}
+
+	return name
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// resolveEntityAddr resolves an entity handle (CEntityIndex)
+// to an entity instance address through the entity list.
+// Returns 0 when the handle is invalid or the entity slot
+// is empty.
+func resolveEntityAddr(
+	memory *leech.Memory,
+	entListBase uintptr,
+	handle int32,
+) uintptr {
+
+	idx := uintptr(handle & 0x7FFF)
+	chunkIdx := idx >> 9
+	entryIdx := idx & 0x1FF
+
+	chunk, err := memory.ReadPtr(entListBase + 0x10 + 8*chunkIdx)
+	if err != nil || chunk == 0 {
+		return 0
+	}
+
+	entityAddr, err := memory.ReadPtr(chunk + 0x70*entryIdx)
+	if err != nil {
+		return 0
+	}
+
+	return entityAddr
 }
 
 ////////////////////////////////////////////////////////////////////////////////
