@@ -72,7 +72,7 @@ func NewOrbitCamera() OrbitCamera {
 		distance: 5000,
 		yaw:      sysMath.Pi / 4,
 		pitch:    sysMath.Pi / 6,
-		fov:      math.ToRadians(60),
+		fov:      math.ToRadians(45),
 		viewport: math.Size{W: 1280, H: 720},
 		near:     1.0,
 		far:      200000.0,

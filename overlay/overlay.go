@@ -33,6 +33,11 @@ const (
 type Overlay struct {
 	game    *game.Game
 	trigger *game.Trigger
+
+	// Last known local team for rendering when the player
+	// pawn is not valid (e.g. dead). Only the render loop
+	// writes this.
+	lastTeam int32
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -165,8 +170,7 @@ func (o *Overlay) renderLoop(ctx context.Context) {
 
 		// Only render when camera and entity data are valid
 		if camera.Result == game.CameraResultSuccess &&
-			action.Result == game.ActionResultSuccess &&
-			action.Player != nil {
+			action.Result == game.ActionResultSuccess {
 
 			o.renderEntities(dc, camera, action, width, height)
 		}
@@ -245,7 +249,14 @@ func (o *Overlay) renderEntities(
 	// ProjectToScreenMvp uses v * M convention. Transpose
 	// to align the two.
 	mvp := camera.View.Transpose()
-	localTeam := action.Player.Team
+
+	var localTeam int32
+	if action.Player != nil {
+		localTeam = action.Player.Team
+		o.lastTeam = localTeam
+	} else {
+		localTeam = o.lastTeam
+	}
 
 	// Extract the game's viewport aspect ratio from the view
 	// matrix. For a combined view-projection matrix, the 3D
@@ -299,13 +310,22 @@ func (o *Overlay) renderEntities(
 			continue
 		}
 
-		// Determine if enemy or teammate
-		isEnemy := entity.Team != localTeam
+		isEnemy := localTeam != 0 && entity.Team != localTeam
+		isCarrier := game.IsObjectiveCarrier(action, entity.Index)
 
 		if isEnemy {
-			o.renderSkeleton(dc, entity, mvp, viewport, vpX, vpY)
+			var c color.NRGBA
+			if isCarrier {
+				c = color.NRGBA{180, 80, 255, 255}
+			} else if entity.Health > 70 {
+				c = color.NRGBA{50, 220, 50, 255}
+			} else if entity.Health > 30 {
+				c = color.NRGBA{255, 160, 30, 255}
+			} else {
+				c = color.NRGBA{255, 50, 50, 255}
+			}
+			o.renderSkeleton(dc, entity, mvp, viewport, vpX, vpY, c)
 		} else {
-			// Teammate indicator
 			headScreen, headVisible := math.ProjectToScreenMvp(
 				entity.Head, viewport, mvp,
 			)
@@ -313,9 +333,33 @@ func (o *Overlay) renderEntities(
 			if headVisible {
 				headScreen.X += vpX
 				headScreen.Y += vpY
-				dc.DrawCircle(headScreen.X, headScreen.Y, 3, color.NRGBA{50, 200, 50, 150})
+
+				c := color.NRGBA{50, 200, 50, 150}
+				if isCarrier {
+					c = color.NRGBA{180, 80, 255, 255}
+				}
+
+				dc.DrawCircle(headScreen.X, headScreen.Y, 3, c)
 			}
 		}
+	}
+
+	// Bomb and hostage world position markers
+	purple := color.NRGBA{180, 80, 255, 255}
+
+	if action.Bomb != nil && !action.Bomb.Origin.IsZero() &&
+		(action.Bomb.Dropped || action.Bomb.Planted) {
+
+		o.renderMarker(dc, action.Bomb.Origin, mvp, viewport, vpX, vpY, purple)
+	}
+
+	for i := range action.Hostages {
+		h := &action.Hostages[i]
+		if h.Rescued || h.Origin.IsZero() {
+			continue
+		}
+
+		o.renderMarker(dc, h.Origin, mvp, viewport, vpX, vpY, purple)
 	}
 
 }
@@ -328,6 +372,7 @@ func (o *Overlay) renderSkeleton(
 	mvp math.Matrix4,
 	viewport math.Size,
 	vpX, vpY float64,
+	c color.NRGBA,
 ) {
 
 	//----------------------------------------------------------------------------//
@@ -388,18 +433,6 @@ func (o *Overlay) renderSkeleton(
 
 	//----------------------------------------------------------------------------//
 
-	// Pick color based on health
-	var c color.NRGBA
-	if entity.Health > 70 {
-		c = color.NRGBA{50, 220, 50, 255}
-	} else if entity.Health > 30 {
-		c = color.NRGBA{255, 160, 30, 255}
-	} else {
-		c = color.NRGBA{255, 50, 50, 255}
-	}
-
-	//----------------------------------------------------------------------------//
-
 	// Vertical spine line
 	if feetVis && headVis {
 		dc.DrawLine(pFeet.X, pFeet.Y, pHead.X, pHead.Y, 3, c)
@@ -428,6 +461,75 @@ func (o *Overlay) renderSkeleton(
 			pLook.Y += vpY
 			dc.DrawLine(pHead.X, pHead.Y, pLook.X, pLook.Y, 3, c)
 		}
+	}
+
+	//----------------------------------------------------------------------------//
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// renderMarker draws a vertical line with an X-shaped base
+// at the given world position, used for bomb and hostage
+// markers.
+func (o *Overlay) renderMarker(
+	dc *Canvas,
+	pos math.Vector3,
+	mvp math.Matrix4,
+	viewport math.Size,
+	vpX, vpY float64,
+	c color.NRGBA,
+) {
+
+	//----------------------------------------------------------------------------//
+
+	topPoint := math.Vector3{X: pos.X, Y: pos.Y, Z: pos.Z + 30}
+
+	// X pattern: two diagonal bars crossing at the base
+	diagAL := math.Vector3{X: pos.X - 10, Y: pos.Y - 10, Z: pos.Z}
+	diagAR := math.Vector3{X: pos.X + 10, Y: pos.Y + 10, Z: pos.Z}
+	diagBL := math.Vector3{X: pos.X - 10, Y: pos.Y + 10, Z: pos.Z}
+	diagBR := math.Vector3{X: pos.X + 10, Y: pos.Y - 10, Z: pos.Z}
+
+	//----------------------------------------------------------------------------//
+
+	pBase, baseVis := math.ProjectToScreenMvp(pos, viewport, mvp)
+	pTop, topVis := math.ProjectToScreenMvp(topPoint, viewport, mvp)
+	pAL, alVis := math.ProjectToScreenMvp(diagAL, viewport, mvp)
+	pAR, arVis := math.ProjectToScreenMvp(diagAR, viewport, mvp)
+	pBL, blVis := math.ProjectToScreenMvp(diagBL, viewport, mvp)
+	pBR, brVis := math.ProjectToScreenMvp(diagBR, viewport, mvp)
+
+	if !baseVis && !topVis {
+		return
+	}
+
+	pBase.X += vpX
+	pBase.Y += vpY
+	pTop.X += vpX
+	pTop.Y += vpY
+	pAL.X += vpX
+	pAL.Y += vpY
+	pAR.X += vpX
+	pAR.Y += vpY
+	pBL.X += vpX
+	pBL.Y += vpY
+	pBR.X += vpX
+	pBR.Y += vpY
+
+	//----------------------------------------------------------------------------//
+
+	// Vertical line
+	if baseVis && topVis {
+		dc.DrawLine(pBase.X, pBase.Y, pTop.X, pTop.Y, 3, c)
+	}
+
+	// Diagonal bars
+	if alVis && arVis {
+		dc.DrawLine(pAL.X, pAL.Y, pAR.X, pAR.Y, 3, c)
+	}
+
+	if blVis && brVis {
+		dc.DrawLine(pBL.X, pBL.Y, pBR.X, pBR.Y, 3, c)
 	}
 
 	//----------------------------------------------------------------------------//

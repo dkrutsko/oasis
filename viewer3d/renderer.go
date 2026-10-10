@@ -301,9 +301,12 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 
 		// Pick color based on relationship
 		var cr, cg, cb, ca float32
+		isCarrier := game.IsObjectiveCarrier(action, entity.Index)
 
 		if isPlayer {
 			cr, cg, cb, ca = 0.3, 0.5, 1.0, 1.0
+		} else if isCarrier {
+			cr, cg, cb, ca = 0.706, 0.314, 1.0, 1.0
 		} else if entity.Health > 70 {
 			cr, cg, cb, ca = 0.196, 0.863, 0.196, 1.0
 		} else if entity.Health > 30 {
@@ -364,6 +367,54 @@ func (r *Renderer) UpdateEntities(action *game.ActionState, camEye math.Vector3,
 			headPos.X, headPos.Y, headPos.Z,
 			headPos.X+dirX*10, headPos.Y+dirY*10, headPos.Z+dirZ*10,
 			cr, cg, cb, ca,
+		)
+	}
+
+	//----------------------------------------------------------------------------//
+
+	// Bomb and hostage world position markers
+	if action.Bomb != nil && !action.Bomb.Origin.IsZero() &&
+		(action.Bomb.Dropped || action.Bomb.Planted) {
+
+		pos := action.Bomb.Origin
+		buf = appendLineQuad(buf, camEye,
+			pos.X, pos.Y, pos.Z,
+			pos.X, pos.Y, pos.Z+48,
+			0.706, 0.314, 1.0, 1.0,
+		)
+		buf = appendLineQuad(buf, camEye,
+			pos.X-12, pos.Y, pos.Z,
+			pos.X+12, pos.Y, pos.Z,
+			0.706, 0.314, 1.0, 1.0,
+		)
+		buf = appendLineQuad(buf, camEye,
+			pos.X, pos.Y-12, pos.Z,
+			pos.X, pos.Y+12, pos.Z,
+			0.706, 0.314, 1.0, 1.0,
+		)
+	}
+
+	for i := range action.Hostages {
+		h := &action.Hostages[i]
+		if h.Rescued || h.Origin.IsZero() {
+			continue
+		}
+
+		pos := h.Origin
+		buf = appendLineQuad(buf, camEye,
+			pos.X, pos.Y, pos.Z,
+			pos.X, pos.Y, pos.Z+48,
+			0.706, 0.314, 1.0, 1.0,
+		)
+		buf = appendLineQuad(buf, camEye,
+			pos.X-12, pos.Y, pos.Z,
+			pos.X+12, pos.Y, pos.Z,
+			0.706, 0.314, 1.0, 1.0,
+		)
+		buf = appendLineQuad(buf, camEye,
+			pos.X, pos.Y-12, pos.Z,
+			pos.X, pos.Y+12, pos.Z,
+			0.706, 0.314, 1.0, 1.0,
 		)
 	}
 

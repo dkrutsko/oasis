@@ -71,6 +71,13 @@ type Game struct {
 	// Only the action updater uses them.
 	entityCache entityCache
 
+	// Cached hostage entity addresses found by periodic
+	// entity list scans on hostage maps. Only the action
+	// updater uses them.
+	lastHostageScan time.Time
+	hostageAddrs    [2]uintptr
+	hostageCount    int
+
 	// Signaled when action or camera state is updated.
 	// The overlay listens on this to render only when
 	// new data is available.
@@ -221,6 +228,9 @@ func (g *Game) checkMapChange(memory *leech.Memory, client uintptr) {
 	g.mapName = mapName
 	g.currentMap.Store(nil)
 	g.mapLock.Unlock()
+
+	// Clear cached hostage entities for the new map
+	g.hostageCount = 0
 
 	// Only load collision data when a maps directory is configured
 	if g.options.Maps == "" {

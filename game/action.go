@@ -83,6 +83,9 @@ type ActionState struct {
 
 	Entities []ActionEntity // Game entities list
 	Player   *ActionEntity  // Local player entity
+
+	Bomb     *BombInfo     // Bomb state on defuse maps
+	Hostages []HostageInfo // Hostage state on hostage maps
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -247,6 +250,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 	cache := &g.entityCache
 	if cache.pid != pid || cache.client != client {
 		*cache = entityCache{pid: pid, client: client}
+		g.hostageCount = 0
 	}
 
 	// Internal CModelState offset to the bone array pointer.
@@ -304,7 +308,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 
 		if scatter == nil {
 			return g.updateActionSequential(
-				result, memory, localPawnAddr, entListBase, listEntry,
+				result, memory, localPawnAddr, entListBase, listEntry, client,
 				offPawnHandle, offHealth, offTeamNum, offOrigin, offEyeAngles,
 				offGameSceneNode, offModelState, offBoneArray,
 			)
@@ -439,6 +443,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		// Left the game, the next frame starts over
 		if localPawnAddr == 0 {
 			*cache = entityCache{pid: pid, client: client}
+			g.hostageCount = 0
 			result.Result = ActionResultSuccess
 			return result
 		}
@@ -447,6 +452,7 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 		// so the next frame resolves it again
 		if entListBase != cache.entListBase || listEntry != cache.listEntry {
 			*cache = entityCache{pid: pid, client: client}
+			g.hostageCount = 0
 			result.Result = ActionResultNoEntList
 			return result
 		}
@@ -638,6 +644,18 @@ func (g *Game) updateAction(scanner *ScannerState) *ActionState {
 
 	//----------------------------------------------------------------------------//
 
+	// Read objective state
+	var pawnHandles [64]int32
+	for e := 0; e < 64; e++ {
+		pawnHandles[e] = cache.chains[e].handle
+	}
+
+	result.Bomb, result.Hostages = g.readObjectives(
+		memory, client, cache.listEntry, pawnHandles,
+	)
+
+	//----------------------------------------------------------------------------//
+
 	// Specify that scan was successful
 	result.Result = ActionResultSuccess
 	return result
@@ -653,6 +671,7 @@ func (g *Game) updateActionSequential(
 	localPawnAddr uintptr,
 	entListBase uintptr,
 	listEntry uintptr,
+	client uintptr,
 	offPawnHandle uintptr,
 	offHealth uintptr,
 	offTeamNum uintptr,
@@ -668,6 +687,7 @@ func (g *Game) updateActionSequential(
 	// Read all game entities
 	entities := make([]ActionEntity, 0, 64)
 	playerIdx := -1
+	var pawnHandles [64]int32
 
 	for e := 0; e < 64; e++ {
 
@@ -682,6 +702,8 @@ func (g *Game) updateActionSequential(
 		if err != nil || pawnHandle == 0 || pawnHandle == -1 {
 			continue
 		}
+
+		pawnHandles[e] = pawnHandle
 
 		// Decode entity handle to get pawn address
 		entityIndex := uintptr(pawnHandle) & 0x7FFF
@@ -775,6 +797,13 @@ func (g *Game) updateActionSequential(
 			result.Entities[i].Distance = sysMath.Sqrt(dx*dx + dy*dy + dz*dz)
 		}
 	}
+
+	//----------------------------------------------------------------------------//
+
+	// Read objective state
+	result.Bomb, result.Hostages = g.readObjectives(
+		memory, client, listEntry, pawnHandles,
+	)
 
 	//----------------------------------------------------------------------------//
 
