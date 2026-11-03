@@ -44,6 +44,10 @@ ARGUMENTS
 	-maps ("./maps") - string
 	 Directory containing .tri or .tri.zst map collision files for
 	 line-of-sight checks. Pass an empty value to disable them.
+
+	-dump ("") - string
+	 Read the offsets from the running game, write offsets.json and
+	 client_dll.json into the given directory and exit.
 `,
 	)
 }

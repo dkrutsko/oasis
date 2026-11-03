@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/dkrutsko/oasis/config"
+	"github.com/dkrutsko/oasis/dump"
 	"github.com/dkrutsko/oasis/game"
 	"github.com/dkrutsko/oasis/input"
 	"github.com/dkrutsko/oasis/leech"
@@ -49,6 +50,7 @@ const (
 	exitCodeCloseLeech
 	exitCodeCreateOverlay
 	exitCodeViewerError
+	exitCodeDumpError
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -196,6 +198,35 @@ func main() {
 
 	l := createLeech(actionDevice, nil)
 	logger.Info("action using fpga device", logger.String("device", actionDevice))
+
+	// Dump the offsets and exit if requested. This only
+	// needs the action FPGA, so the camera FPGA is never
+	// created.
+	if cfg.Dump != "" {
+		ctx, cancel := setupSignals()
+		defer cancel()
+
+		err := dump.Dump(ctx, l, cfg.Dump)
+		closeErr := l.Close()
+
+		if err != nil {
+			logger.Err(
+				"failed to dump offsets",
+				logger.Error("error", err),
+			)
+			os.Exit(int(exitCodeDumpError))
+		}
+
+		if closeErr != nil {
+			logger.Err(
+				"failed to close leechcore",
+				logger.Error("error", closeErr),
+			)
+			os.Exit(int(exitCodeCloseLeech))
+		}
+
+		return
+	}
 
 	var l2 *leech.Leech
 	if actionIdx != cameraIdx {

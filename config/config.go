@@ -50,6 +50,11 @@ type Config struct {
 	// files, ./maps by default. When empty, line-of-sight
 	// checks are disabled.
 	Maps string
+
+	// Directory to write offsets.json and client_dll.json
+	// into. When set, the offsets are dumped from the running
+	// game and the application exits.
+	Dump string
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -96,6 +101,7 @@ func LoadConfig() (*Config, error) {
 	flagSet.IntVar(&result.Action, "action", -1, "")
 	flagSet.IntVar(&result.Camera, "camera", -1, "")
 	flagSet.StringVar(&result.Maps, "maps", "./maps", "")
+	flagSet.StringVar(&result.Dump, "dump", "", "")
 
 	var rateBoth int
 	flagSet.IntVar(&rateBoth, "rate", 0, "")
