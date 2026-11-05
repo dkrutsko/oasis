@@ -3,6 +3,8 @@
 package leech
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"unsafe"
 
@@ -80,9 +82,20 @@ func loadVmmDll() error {
 		libName = "vmm.dylib"
 	}
 
+	// Prefer the library next to the executable. A bare name
+	// is only searched for in the working directory and the
+	// system paths, so this allows running from any directory.
+	libPath := libName
+	if exe, err := os.Executable(); err == nil {
+		path := filepath.Join(filepath.Dir(exe), libName)
+		if _, err := os.Stat(path); err == nil {
+			libPath = path
+		}
+	}
+
 	var err error
 	// Attempt to load the VMM shared library
-	result.lib, err = purego.Dlopen(libName, purego.RTLD_NOW|purego.RTLD_GLOBAL)
+	result.lib, err = purego.Dlopen(libPath, purego.RTLD_NOW|purego.RTLD_GLOBAL)
 	if err != nil {
 		return errors.New(
 			"failed to load vmm library",

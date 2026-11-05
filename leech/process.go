@@ -143,7 +143,8 @@ func (p *Process) GetName() string {
 // GetPath returns the full path of the process executable
 // as a UTF-8 encoded string. The path is lazily loaded from
 // VMMDLL on first access and cached for subsequent calls.
-// Returns an empty string if no path is available.
+// Returns an error if no path is available, which includes
+// kernel processes such as System.
 func (p *Process) GetPath() (string, error) {
 
 	//----------------------------------------------------------------------------//
@@ -164,15 +165,12 @@ func (p *Process) GetPath() (string, error) {
 
 	//----------------------------------------------------------------------------//
 
-	var strPtr uintptr
-
 	// Option 2 = PATH_USER_IMAGE (full exe path)
-	success, err := vmmCall(
+	strPtr, err := vmmCall(
 		vmmDll.processGetInformationString,
 		p.leech.handle,
 		uintptr(p.pid),
 		uintptr(2),
-		uintptr(unsafe.Pointer(&strPtr)),
 	)
 	if err != nil {
 		return "", errors.New(
@@ -181,7 +179,7 @@ func (p *Process) GetPath() (string, error) {
 			errors.Error("error", err),
 		)
 	}
-	if success == 0 {
+	if strPtr == 0 {
 		return "", errors.New(
 			"failed to get process path",
 			errors.Uint32("pid", p.pid),
@@ -191,12 +189,10 @@ func (p *Process) GetPath() (string, error) {
 	//----------------------------------------------------------------------------//
 
 	// Convert the returned string pointer
-	if strPtr != 0 {
-		p.path = ptrToString(strPtr)
+	p.path = utf8PtrToString(strPtr)
 
-		// Free the allocated string memory
-		_, _ = vmmCall(vmmDll.memFree, strPtr)
-	}
+	// Free the allocated string memory
+	_, _ = vmmCall(vmmDll.memFree, strPtr)
 
 	//----------------------------------------------------------------------------//
 

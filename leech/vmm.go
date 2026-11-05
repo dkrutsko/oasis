@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unsafe"
 )
 
 //----------------------------------------------------------------------------//
@@ -14,7 +15,7 @@ import (
 
 // VmmRelease is the VMMDLL version this package was built
 // against.
-const VmmRelease = "5.14.5"
+const VmmRelease = "5.19.1"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -42,6 +43,25 @@ func cStrToString(b []byte) string {
 
 	// Convert string up to null-terminator
 	return strings.TrimSpace(string(b[:n]))
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// utf8PtrToString copies a null-terminated UTF-8 string. Use
+// it for VMMDLL functions that return `LPSTR` on every platform.
+func utf8PtrToString(ptr uintptr) string {
+
+	if ptr == 0 {
+		return ""
+	}
+
+	// Read null-terminated UTF-8 string from pointer
+	n := 0
+	for *(*byte)(unsafe.Pointer(ptr + uintptr(n))) != 0 {
+		n++
+	}
+
+	return string(unsafe.Slice((*byte)(unsafe.Pointer(ptr)), n))
 }
 
 //----------------------------------------------------------------------------//

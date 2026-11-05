@@ -235,11 +235,9 @@ func loadVmmDll() error {
 
 func vmmCall(proc vmmProc, args ...uintptr) (uintptr, error) {
 
-	r1, _, err := proc.Call(args...)
-	if err.(windows.Errno) != 0 {
-		return r1, err
-	}
-
+	// The error from Call always holds GetLastError, which can
+	// be stale after a successful call. Only r1 reports failure.
+	r1, _, _ := proc.Call(args...)
 	return r1, nil
 }
 
