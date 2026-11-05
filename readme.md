@@ -22,7 +22,7 @@ Oasis is a real-time game assistance tool that uses FPGA-based DMA (Direct Memor
 - **Dual FPGA Support** - Separate devices for action and camera reads to avoid USB contention
 - **Overlay Rendering** - Outputs entity data to shared memory for use with Moonlight streaming
 - **3D Map Viewer** - GPU-accelerated viewer using SDL3 (Metal or Vulkan, loaded with purego) for visualizing collision geometry and entities
-- **Cross-Platform** - Targets macOS (Intel + ARM + Universal), Linux (x86_64/ARM64) and Windows (x86_64) in pure Go, without cgo. On Windows, the overlay and input do not yet notice when Moonlight ends its session
+- **Cross-Platform** - Targets macOS (Intel + ARM), Linux (x86_64/ARM64) and Windows (x86_64) in pure Go, without cgo. Platform-specific libraries are bundled under `redist/` and included in release archives. On Windows, the overlay and input do not yet notice when Moonlight ends its session
 - **Structured Logging** - JSON or colored text output with debug mode
 - **Health Monitoring** - Goroutine heartbeat detection for service health
 - **Built-in Profiling** - Optional pprof server on localhost:6060, and `./profile.sh` to profile whole sessions
@@ -30,7 +30,7 @@ Oasis is a real-time game assistance tool that uses FPGA-based DMA (Direct Memor
 ## Requirements
 
 - Go 1.27.1+
-- FPGA hardware (FT601-based) with LeechCore/VMMDLL drivers
+- FPGA hardware (FT601-based). The LeechCore/VMMDLL libraries are bundled under `redist/` and copied into the build output automatically
 - Make (for build commands)
 - `zstd`, `jq`, `curl` and `unzip` (for map extraction)
 - `shellcheck` (for `./check.sh`)
@@ -39,7 +39,7 @@ Oasis is a real-time game assistance tool that uses FPGA-based DMA (Direct Memor
 
 - Use this [modified version](https://github.com/dkrutsko/moonlight-qt) of Moonlight streaming software to stream the game.
 - Download memory offsets using `./dump.sh` or by downloading `offsets.json` and `client_dll.json` from [this repository](https://github.com/a2x/cs2-dumper).
-- Download [pcileech](https://github.com/ufrisk/pcileech/releases/tag/v4.19) for the operating system you're planning on running this software.
+- The required LeechCore/VMMDLL libraries (v5.19.1) are included under `redist/` and synced to `./bin` during the build.
 - Run `./downloader.sh` once to download DepotDownloader, then `./extract.sh` to extract the map collision data into `./bin/maps`. Run `./extract.sh` again after game updates, it only extracts the maps that changed.
 
 ## Building
@@ -61,17 +61,20 @@ make build
 # Build debug binary (with race detection and GDB support)
 make debug
 
+# Copy platform libraries to the output dir
+make sync
+
 # Build the map extractor used by extract.sh
 make extractor
 
 # Clean build artifacts, including the extracted maps
 make clean
 
-# Cross-compile for all platforms
+# Build release archives for all platforms
 make publish
 ```
 
-The release binary is output to `./bin/oasis`. Oasis is pure Go and needs no cgo, build tags or extra environment variables. Both viewers are part of every build.
+The release binary is output to `./bin/oasis`. `build` and `debug` automatically run `sync` first, which copies the current platform's LeechCore/VMMDLL libraries from `redist/` into `./bin`. Oasis is pure Go and needs no cgo, build tags or extra environment variables. Both viewers are part of every build.
 
 ## Usage
 
@@ -149,6 +152,7 @@ oasis/
 	maps/            Map collision geometry loading (.tri.zst and .tri files) and BVH acceleration
 	math/            Vector/matrix math library (Vector2/3/4, Matrix3/4, Quaternion)
 	overlay/         Overlay renderer (shared memory output for Moonlight) and its preview window
+	redist/          LeechCore/VMMDLL libraries for each platform (darwin, linux, windows)
 	shm/             Cross-platform shared memory (SysV on Unix, Windows API)
 	viewer3d/        GPU-accelerated 3D map viewer (SDL3) with FPS camera
 	errors/          Custom structured error handling
